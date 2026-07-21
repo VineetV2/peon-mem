@@ -78,8 +78,18 @@ recommended (consolidation + semantic embeddings); without one Peon still works 
 One line:
 
 ```bash
-npm install -g github:VineetV2/peon-mem && peon-mem install
+curl -fsSL https://raw.githubusercontent.com/VineetV2/peon-mem/main/install.sh | bash
 ```
+
+(or, once you have the CLI: `npm install -g peon-mem && peon-mem install`)
+
+The guided setup asks four things:
+
+1. **Where your global brain lives** (default: `~/Library/Application Support/Peon`)
+2. **Which LLM** — OpenRouter (one key, any model) · OpenAI · Anthropic · **Ollama (100% local & free)** · or skip
+3. Installs the **daemon** as an auto-start service
+4. **Detects your AI apps** — Claude Code, Codex, Gemini CLI, Cursor — and wires the MCP server
+   (+ hooks for Claude Code) into the ones you pick. Every touched config gets a `.peon-backup`.
 
 That builds the package, starts the daemon as a service, wires your Claude Code hooks + MCP
 server (with a backup of your settings), and writes a config template. Then add your key to
