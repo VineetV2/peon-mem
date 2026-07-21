@@ -92,6 +92,10 @@ const CLIENT_SCRIPT = String.raw `
   function renderRoute(force){
     var r=currentRoute();
     ROUTES.forEach(function(x){ var p=EL("page-"+x); if(p) p.hidden=(x!==r); });
+    // The project dropdown is CONTEXT, not chrome: it only applies inside a project's
+    // Insights/Memory pages. Global pages (Neural Core / Sectors / Systems) hide it —
+    // switching projects there happens by picking a galaxy or a sector card.
+    var sw=EL("switcher"); if(sw) sw.hidden=!(r==="overview"||r==="memory");
     // Nav highlight: overview/memory belong under "projects".
     ["brain","projects","ops"].forEach(function(x){ var t=EL("nav-"+x); if(t) t.classList.toggle("on", x===r || ((r==="overview"||r==="memory")&&x==="projects")); });
     if(r==="brain"){ loadDashboard(force); renderBrainHome(); }
