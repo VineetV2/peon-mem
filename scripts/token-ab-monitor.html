@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Peon · Token A/B Monitor</title>
+<style>
+  :root {
+    --bg: #0e0e10; --bg2: #1a1a1d; --bg3: #242428;
+    --border: #2e2e33; --text: #e8e8ec; --muted: #7a7a85;
+    --green: #3dd68c; --red: #f87171; --blue: #60a5fa;
+    --yellow: #fbbf24; --purple: #a78bfa; --mono: "JetBrains Mono", "Fira Code", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+
+  /* Project filter */
+  .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+  .filters label { color: var(--muted); font-size: 12px; }
+  select { background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+
+  /* Summary cards */
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .card.on { border-color: #22543d; }
+  .card.off { border-color: #7f1d1d; }
+  .card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; }
+  .card.on .card-label { color: var(--green); }
+  .card.off .card-label { color: var(--red); }
+  .stat { margin-bottom: 10px; }
+  .stat-val { font-size: 28px; font-weight: 700; font-family: var(--mono); }
+  .stat-lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .mini-stat { background: var(--bg3); border-radius: 6px; padding: 10px; }
+  .mini-val { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+  .mini-lbl { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* Delta banner */
+  .delta { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 28px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .delta-icon { font-size: 24px; }
+  .delta-text { flex: 1; }
+  .delta-val { font-size: 20px; font-weight: 700; font-family: var(--mono); }
+  .delta-val.saving { color: var(--green); }
+  .delta-val.costly { color: var(--red); }
+  .delta-lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* Sessions table */
+  .section-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--bg2); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg3); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.on { background: #14532d; color: var(--green); }
+  .badge.off { background: #450a0a; color: var(--red); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); }
+  .empty { text-align: center; padding: 48px; color: var(--muted); }
+  .proj { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="dot"></div>
+  <h1>Peon Token A/B Monitor</h1>
+  <span class="sub">Compare token usage: Peon ON vs Peon OFF</span>
+</header>
+<main>
+  <div class="filters">
+    <label>Project:</label>
+    <select id="proj-filter"><option value="">All projects</option></select>
+    <label style="margin-left:12px">Refresh:</label>
+    <select id="refresh-select">
+      <option value="10000">10s</option>
+      <option value="30000" selected>30s</option>
+      <option value="60000">60s</option>
+      <option value="0">Manual</option>
+    </select>
+  </div>
+  <div class="cards" id="cards">
+    <div class="card on"><div class="card-label">Peon ON</div><div class="empty muted">No data yet</div></div>
+    <div class="card off"><div class="card-label">Peon OFF</div><div class="empty muted">No data yet</div></div>
+  </div>
+  <div class="delta" id="delta" style="display:none"></div>
+  <div class="section-title">Session Log</div>
+  <table id="sessions-table">
+    <thead><tr>
+      <th>Time</th><th>Peon</th><th>Project</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Total</th><th>Model</th>
+    </tr></thead>
+    <tbody id="sessions-body"><tr><td colspan="9" class="empty">Waiting for sessions…</td></tr></tbody>
+  </table>
+</main>
+<script>
+const DAEMON = "http://127.0.0.1:3737";
+let allRecords = [];
+let timer = null;
+
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(2)+"M";
+  if (n >= 1e3) return (n/1e3).toFixed(1)+"k";
+  return String(n);
+}
+
+function projName(p) {
+  const parts = p.replace(/\\/g,"/").split("/");
+  return parts[parts.length-1] || p;
+}
+
+function ts(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+}
+
+function aggregate(records) {
+  const r = { sessions: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, total: 0 };
+  for (const rec of records) {
+    r.sessions++;
+    r.input += rec.inputTokens || 0;
+    r.output += rec.outputTokens || 0;
+    r.cacheRead += rec.cacheReadTokens || 0;
+    r.cacheCreate += rec.cacheCreateTokens || 0;
+    r.total += rec.totalTokens || 0;
+  }
+  r.avgTotal = r.sessions ? Math.round(r.total / r.sessions) : 0;
+  return r;
+}
+
+function renderCards(onRecs, offRecs) {
+  function cardHtml(recs, cls, label) {
+    const a = aggregate(recs);
+    if (!recs.length) return `<div class="card ${cls}"><div class="card-label">${label}</div><div class="empty muted">No sessions yet</div></div>`;
+    return `<div class="card ${cls}">
+      <div class="card-label">${label}</div>
+      <div class="stat"><div class="stat-val">${fmt(a.total)}</div><div class="stat-lbl">total tokens · ${a.sessions} session${a.sessions!==1?"s":""}</div></div>
+      <div class="stats-row">
+        <div class="mini-stat"><div class="mini-val">${fmt(a.avgTotal)}</div><div class="mini-lbl">avg/session</div></div>
+        <div class="mini-stat"><div class="mini-val">${fmt(a.input)}</div><div class="mini-lbl">input</div></div>
+        <div class="mini-stat"><div class="mini-val">${fmt(a.output)}</div><div class="mini-lbl">output</div></div>
+      </div>
+      <div class="stats-row" style="margin-top:8px">
+        <div class="mini-stat"><div class="mini-val" style="color:var(--blue)">${fmt(a.cacheRead)}</div><div class="mini-lbl">cache read</div></div>
+        <div class="mini-stat"><div class="mini-val" style="color:var(--yellow)">${fmt(a.cacheCreate)}</div><div class="mini-lbl">cache write</div></div>
+      </div>
+    </div>`;
+  }
+  document.getElementById("cards").innerHTML =
+    cardHtml(onRecs, "on", "Peon ON ✓") + cardHtml(offRecs, "off", "Peon OFF ✗");
+}
+
+function renderDelta(onRecs, offRecs) {
+  const el = document.getElementById("delta");
+  if (!onRecs.length || !offRecs.length) { el.style.display = "none"; return; }
+  const on = aggregate(onRecs);
+  const off = aggregate(offRecs);
+  const diffAvg = off.avgTotal - on.avgTotal;
+  const pct = off.avgTotal ? Math.round(Math.abs(diffAvg) / off.avgTotal * 100) : 0;
+  const saving = diffAvg > 0;
+  el.style.display = "flex";
+  el.innerHTML = `
+    <div class="delta-icon">${saving ? "📉" : "📈"}</div>
+    <div class="delta-text">
+      <div class="delta-val ${saving?"saving":"costly"}">${saving?"-":"+"} ${fmt(Math.abs(diffAvg))} tokens/session (${pct}%)</div>
+      <div class="delta-lbl">${saving
+        ? `Peon saves ~${fmt(Math.abs(diffAvg))} tokens per session on average (${on.sessions} ON sessions vs ${off.sessions} OFF sessions)`
+        : `Peon adds ~${fmt(Math.abs(diffAvg))} tokens per session on average — check injection size`
+      }</div>
+    </div>`;
+}
+
+function renderTable(records) {
+  const tbody = document.getElementById("sessions-body");
+  if (!records.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">No sessions recorded yet. Sessions are logged when they end.</td></tr>'; return; }
+  const sorted = [...records].sort((a,b) => b.ts.localeCompare(a.ts));
+  tbody.innerHTML = sorted.map(r => `<tr>
+    <td class="mono muted">${ts(r.ts)}</td>
+    <td><span class="badge ${r.peonEnabled?"on":"off"}">${r.peonEnabled?"ON":"OFF"}</span></td>
+    <td><div class="proj" title="${r.projectPath}">${projName(r.projectPath)}</div></td>
+    <td class="mono">${fmt(r.inputTokens||0)}</td>
+    <td class="mono">${fmt(r.outputTokens||0)}</td>
+    <td class="mono" style="color:var(--blue)">${fmt(r.cacheReadTokens||0)}</td>
+    <td class="mono" style="color:var(--yellow)">${fmt(r.cacheCreateTokens||0)}</td>
+    <td class="mono" style="font-weight:600">${fmt(r.totalTokens||0)}</td>
+    <td class="muted" style="font-size:11px">${r.model||"—"}</td>
+  </tr>`).join("");
+}
+
+function render() {
+  const proj = document.getElementById("proj-filter").value;
+  const filtered = proj ? allRecords.filter(r => r.projectPath === proj) : allRecords;
+  const on = filtered.filter(r => r.peonEnabled);
+  const off = filtered.filter(r => !r.peonEnabled);
+  renderCards(on, off);
+  renderDelta(on, off);
+  renderTable(filtered);
+}
+
+function updateProjectFilter(records) {
+  const sel = document.getElementById("proj-filter");
+  const current = sel.value;
+  const projects = [...new Set(records.map(r => r.projectPath))].sort();
+  sel.innerHTML = '<option value="">All projects</option>' + projects.map(p => `<option value="${p}"${p===current?" selected":""}>${projName(p)}</option>`).join("");
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(DAEMON + "/token-ab");
+    if (!res.ok) throw new Error("daemon error");
+    const data = await res.json();
+    allRecords = data.records || [];
+    updateProjectFilter(allRecords);
+    render();
+  } catch(e) {
+    console.warn("Peon daemon unreachable:", e.message);
+  }
+}
+
+document.getElementById("proj-filter").addEventListener("change", render);
+document.getElementById("refresh-select").addEventListener("change", function() {
+  clearInterval(timer);
+  const ms = parseInt(this.value);
+  if (ms > 0) timer = setInterval(refresh, ms);
+});
+
+refresh();
+timer = setInterval(refresh, 30000);
+</script>
+</body>
+</html>

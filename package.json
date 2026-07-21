@@ -1,0 +1,48 @@
+{
+  "name": "peon-memory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "peon-mcp": "dist/index.js",
+    "peon-daemon": "dist/daemon-cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "daemon": "node dist/daemon-cli.js",
+    "install:peon": "node scripts/install-peon.mjs",
+    "evaluate": "node scripts/evaluate-peon.mjs",
+    "eval": "node scripts/eval-retrieval-labeled.mjs run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "PEON_QUERY_EMBED_CACHE=/tmp/peon-test-query-embed-cache.jsonl vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0"
+  },
+  "description": "Local-first hierarchical memory brain for AI coding agents — auto-capture, LLM consolidation into beliefs, hybrid retrieval, per-prompt injection, a living Neural Universe monitor, and a daily self-improvement loop. Works with Claude Code, Codex, and any MCP client.",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "mcp",
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "local-first",
+    "llm",
+    "rag",
+    "knowledge-base"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vineetvora/peon"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
