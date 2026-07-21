@@ -43,12 +43,14 @@ export declare class LocalEmbeddingClient implements EmbeddingClient {
 export interface OpenRouterEmbeddingClientOptions {
     apiKey: string;
     model: string;
+    baseUrl?: string;
     fetchImpl?: typeof fetch;
 }
 export declare class OpenRouterEmbeddingClient implements EmbeddingClient {
     readonly model: string;
     private readonly apiKey;
     private readonly fetchImpl;
+    private readonly baseUrl;
     constructor(options: OpenRouterEmbeddingClientOptions);
     embed(texts: string[]): Promise<EmbeddingVector[]>;
 }
@@ -84,7 +86,7 @@ export declare class FallbackEmbeddingClient implements EmbeddingClient {
 }
 export type EmbeddingMode = PeonConfig["embeddingMode"];
 export interface CreateEmbeddingClientOptions {
-    config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl">;
+    config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl">;
     onFallback?: (error: unknown) => void;
 }
 /** Build the embedding client implied by config, or null when embeddings are off. */

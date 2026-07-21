@@ -167,8 +167,8 @@ export class OpenRouterMemoryModelClient {
         if (input.config.aiMode === "off") {
             throw new Error("Peon AI processing is disabled by PEON_AI_MODE=off.");
         }
-        if (!input.config.openRouterApiKey) {
-            throw new Error("OPENROUTER_API_KEY is required for Peon AI processing.");
+        if (!input.config.llmApiKey && input.config.provider !== "ollama") {
+            throw new Error("An LLM API key is required for Peon AI processing (PEON_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY).");
         }
         if (!input.rawMemory.trim()) {
             return {
@@ -184,10 +184,12 @@ export class OpenRouterMemoryModelClient {
         }
         userBlocks.push("", "## New session log (the delta to consolidate):", input.rawMemory);
         const userPrompt = userBlocks.join("\n");
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        if (input.config.provider === "anthropic")
+            return anthropicProcess(input, systemPrompt, userPrompt);
+        const response = await fetch(input.config.llmBaseUrl.replace(/\/$/, "") + "/chat/completions", {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${input.config.openRouterApiKey}`,
+                Authorization: `Bearer ${input.config.llmApiKey ?? ""}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -361,6 +363,31 @@ function emptyProcessedMemory(summary) {
         artifacts: [],
         timeline: []
     };
+}
+/** Anthropic Messages API adapter — same contract as the OpenAI-compatible path. */
+async function anthropicProcess(input, systemPrompt, userPrompt) {
+    const response = await fetch(input.config.llmBaseUrl.replace(/\/$/, "") + "/v1/messages", {
+        method: "POST",
+        headers: {
+            "x-api-key": input.config.llmApiKey ?? "",
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            model: input.config.processingModel,
+            max_tokens: Number(process.env.PEON_CONSOLIDATION_MAX_TOKENS) || 8192,
+            system: systemPrompt,
+            messages: [{ role: "user", content: userPrompt }]
+        })
+    });
+    if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Anthropic memory processing failed with ${response.status}${body ? `: ${body}` : ""}`);
+    }
+    const json = (await response.json());
+    const content = (json.content ?? []).map((c) => c.text ?? "").join("");
+    const estimatedTokens = (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0);
+    return { content, model: input.config.processingModel, estimatedTokens };
 }
 function buildSystemPrompt() {
     return `You are Peon, a local-first memory processor for AI coding and research sessions.

@@ -1,7 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 
+export type PeonProvider = "openrouter" | "openai" | "anthropic" | "ollama";
+
 export interface PeonConfig {
+  /** LLM provider for consolidation (+ embeddings where supported). */
+  provider: PeonProvider;
+  /** Generic API key (falls back to provider-specific env vars). */
+  llmApiKey?: string;
+  /** OpenAI-compatible chat/embeddings base URL for the provider. */
+  llmBaseUrl: string;
   openRouterApiKey?: string;
   processingModel: string;
   embeddingModel?: string;
@@ -37,13 +45,42 @@ function resolveEmbeddingMode(
   return caps.hasKey && caps.hasModel ? "api" : "local";
 }
 
+const PROVIDER_BASE_URLS: Record<PeonProvider, string> = {
+  openrouter: "https://openrouter.ai/api/v1",
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com",
+  ollama: "http://127.0.0.1:11434/v1" // Ollama's OpenAI-compatible endpoint
+};
+
+const PROVIDER_DEFAULT_MODELS: Record<PeonProvider, string> = {
+  openrouter: "google/gemini-2.5-flash-lite",
+  openai: "gpt-4o-mini",
+  anthropic: "claude-haiku-4-5-20251001",
+  ollama: "llama3.2"
+};
+
+function resolveProvider(mergedEnv: Env): PeonProvider {
+  const explicit = mergedEnv.PEON_PROVIDER?.trim().toLowerCase();
+  if (explicit === "openrouter" || explicit === "openai" || explicit === "anthropic" || explicit === "ollama") return explicit;
+  if (mergedEnv.OPENROUTER_API_KEY) return "openrouter";
+  if (mergedEnv.OPENAI_API_KEY) return "openai";
+  if (mergedEnv.ANTHROPIC_API_KEY) return "anthropic";
+  return "openrouter"; // default; without a key the cost gate simply never opens
+}
+
 export function loadPeonConfig(env: Env = process.env): PeonConfig {
   const mergedEnv = env === process.env ? { ...readEnvFile(), ...env } : env;
-  const openRouterApiKey = optional(mergedEnv.OPENROUTER_API_KEY);
+  const provider = resolveProvider(mergedEnv);
+  const llmApiKey = optional(mergedEnv.PEON_API_KEY) ??
+    optional(mergedEnv.OPENROUTER_API_KEY) ?? optional(mergedEnv.OPENAI_API_KEY) ?? optional(mergedEnv.ANTHROPIC_API_KEY);
+  const openRouterApiKey = provider === "openrouter" ? (optional(mergedEnv.OPENROUTER_API_KEY) ?? llmApiKey) : optional(mergedEnv.OPENROUTER_API_KEY);
   const embeddingModel = optional(mergedEnv.PEON_EMBEDDING_MODEL);
   return {
+    provider,
+    llmApiKey,
+    llmBaseUrl: optional(mergedEnv.PEON_LLM_BASE_URL) ?? PROVIDER_BASE_URLS[provider],
     openRouterApiKey,
-    processingModel: mergedEnv.PEON_PROCESSING_MODEL ?? mergedEnv.PEON_SUMMARY_MODEL ?? "google/gemini-2.5-flash-lite",
+    processingModel: mergedEnv.PEON_PROCESSING_MODEL ?? mergedEnv.PEON_SUMMARY_MODEL ?? PROVIDER_DEFAULT_MODELS[provider],
     embeddingModel,
     embeddingMode: resolveEmbeddingMode(mergedEnv.PEON_EMBEDDING_MODE, {
       hasKey: Boolean(openRouterApiKey),

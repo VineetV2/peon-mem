@@ -100,6 +100,7 @@ export class LocalEmbeddingClient implements EmbeddingClient {
 export interface OpenRouterEmbeddingClientOptions {
   apiKey: string;
   model: string;
+  baseUrl?: string;               // any OpenAI-compatible /embeddings endpoint
   fetchImpl?: typeof fetch;
 }
 
@@ -200,9 +201,12 @@ export class OpenRouterEmbeddingClient implements EmbeddingClient {
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
 
+  private readonly baseUrl: string;
+
   constructor(options: OpenRouterEmbeddingClientOptions) {
     this.apiKey = options.apiKey;
     this.model = options.model;
+    this.baseUrl = (options.baseUrl ?? "https://openrouter.ai/api/v1").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -215,7 +219,7 @@ export class OpenRouterEmbeddingClient implements EmbeddingClient {
       const hit = cacheGet(key);
       if (hit) return [hit];
     }
-    const response = await this.fetchImpl("https://openrouter.ai/api/v1/embeddings", {
+    const response = await this.fetchImpl(this.baseUrl + "/embeddings", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -339,7 +343,7 @@ export class FallbackEmbeddingClient implements EmbeddingClient {
 export type EmbeddingMode = PeonConfig["embeddingMode"];
 
 export interface CreateEmbeddingClientOptions {
-  config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl">;
+  config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl">;
   onFallback?: (error: unknown) => void;
 }
 
@@ -366,10 +370,13 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions): Em
     return new FallbackEmbeddingClient(ollama, fallback, options.onFallback);
   }
 
-  if (config.embeddingMode === "api" && config.openRouterApiKey && config.embeddingModel) {
+  const apiKey = config.llmApiKey ?? config.openRouterApiKey;
+  const embeddable = config.provider !== "anthropic"; // Anthropic has no embeddings API — local fallback
+  if (config.embeddingMode === "api" && apiKey && config.embeddingModel && embeddable) {
     const primary = new OpenRouterEmbeddingClient({
-      apiKey: config.openRouterApiKey,
-      model: config.embeddingModel
+      apiKey,
+      model: config.embeddingModel,
+      baseUrl: config.llmBaseUrl
     });
     return new FallbackEmbeddingClient(primary, new LocalEmbeddingClient(), options.onFallback);
   }

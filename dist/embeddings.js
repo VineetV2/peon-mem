@@ -171,9 +171,11 @@ export class OpenRouterEmbeddingClient {
     model;
     apiKey;
     fetchImpl;
+    baseUrl;
     constructor(options) {
         this.apiKey = options.apiKey;
         this.model = options.model;
+        this.baseUrl = (options.baseUrl ?? "https://openrouter.ai/api/v1").replace(/\/$/, "");
         this.fetchImpl = options.fetchImpl ?? fetch;
     }
     async embed(texts) {
@@ -187,7 +189,7 @@ export class OpenRouterEmbeddingClient {
             if (hit)
                 return [hit];
         }
-        const response = await this.fetchImpl("https://openrouter.ai/api/v1/embeddings", {
+        const response = await this.fetchImpl(this.baseUrl + "/embeddings", {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${this.apiKey}`,
@@ -317,10 +319,13 @@ export function createEmbeddingClient(options) {
             : new LocalEmbeddingClient();
         return new FallbackEmbeddingClient(ollama, fallback, options.onFallback);
     }
-    if (config.embeddingMode === "api" && config.openRouterApiKey && config.embeddingModel) {
+    const apiKey = config.llmApiKey ?? config.openRouterApiKey;
+    const embeddable = config.provider !== "anthropic"; // Anthropic has no embeddings API — local fallback
+    if (config.embeddingMode === "api" && apiKey && config.embeddingModel && embeddable) {
         const primary = new OpenRouterEmbeddingClient({
-            apiKey: config.openRouterApiKey,
-            model: config.embeddingModel
+            apiKey,
+            model: config.embeddingModel,
+            baseUrl: config.llmBaseUrl
         });
         return new FallbackEmbeddingClient(primary, new LocalEmbeddingClient(), options.onFallback);
     }
