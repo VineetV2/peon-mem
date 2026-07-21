@@ -59,7 +59,7 @@ Requirements: Node 20+, macOS or Linux. An [OpenRouter](https://openrouter.ai) A
 recommended (consolidation + semantic embeddings); without one Peon still works lexical-only.
 
 ```bash
-git clone https://github.com/vineetvora/peon && cd peon
+git clone https://github.com/VineetV2/peon-mem && cd peon
 npm install
 npm run build
 node scripts/install-peon.mjs        # prints your exact hook + MCP config snippets
