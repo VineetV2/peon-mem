@@ -5,10 +5,11 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
-// Hard off-switch (for A/B testing). When PEON_DISABLED is set, the hook does
-// nothing at all — no recording, no context injection, no daemon calls — so the
-// session runs purely on the cloud model with zero Peon involvement.
-if (/^(1|true|yes|on)$/i.test(process.env.PEON_DISABLED || "")) process.exit(0);
+// Hard off-switch (for A/B testing). When PEON_DISABLED is set, Peon does nothing —
+// no injection, no recording, no daemon calls — EXCEPT counting the session's token
+// usage on Stop/SessionEnd, because the OFF arm's whole purpose is to be the baseline
+// in the token A/B comparison. (Handled inside the main block below.)
+const PEON_OFF = /^(1|true|yes|on)$/i.test(process.env.PEON_DISABLED || "");
 
 const daemonUrl = (process.env.PEON_DAEMON_URL || "http://127.0.0.1:3737").replace(/\/$/, "");
 const stateDir =
@@ -38,6 +39,12 @@ const PEON_FIRST_DIRECTIVE =
 // to 400/600, well under this). Declared up here — like PEON_FIRST_DIRECTIVE —
 // so it is initialized before the top-level await block calls getProjectContext.
 const MAX_CONTEXT_QUERY_CHARS = 2000;
+
+// Token A/B ledger paths — declared BEFORE the top-level await block (everything the main
+// block touches must be initialized first, or the reference throws a silent TDZ error;
+// that exact bug made token tracking a no-op for weeks).
+const TOKEN_AB_LOG = join(homedir(), "Library", "Application Support", "Peon", "token-ab-log.jsonl");
+const TOKEN_AB_LOGGED_SESSIONS = join(homedir(), "Library", "Application Support", "Peon", "token-ab-sessions.json");
 
 // Resolve any working directory to its ONE project brain, so memory never fragments:
 //   1. collapse git-worktree paths to the repo root (…/.claude/worktrees/x → repo)
@@ -87,6 +94,11 @@ try {
   externalSessionId =
     readText(input, ["session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"]) ||
     externalSessionId;
+
+  if (PEON_OFF) {
+    if (eventName === "Stop" || eventName === "SessionEnd") await trackTokenUsage(input, projectPath, externalSessionId);
+    process.exit(0);
+  }
 
   if (eventName === "SessionStart") {
     await ensurePeonSession({ projectPath, externalSessionId, client: hookClient });
@@ -400,10 +412,6 @@ function safeName(value) {
   return String(value).replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
-const TOKEN_AB_LOG = join(homedir(), "Library", "Application Support", "Peon", "token-ab-log.jsonl");
-
-const TOKEN_AB_LOGGED_SESSIONS = join(homedir(), "Library", "Application Support", "Peon", "token-ab-sessions.json");
-
 async function recordTokenUsage({ projectPath, externalSessionId, transcriptPath }) {
   try {
     // Only log once per session — Stop fires on every response turn, not just session end.
@@ -444,7 +452,7 @@ async function recordTokenUsage({ projectPath, externalSessionId, transcriptPath
     // Mark session as logged (keep last 500 to avoid unbounded growth)
     logged.push(externalSessionId);
     await writeFile(TOKEN_AB_LOGGED_SESSIONS, JSON.stringify(logged.slice(-500)), "utf8");
-  } catch { /* non-fatal */ }
+  } catch (e) { if (process.env.PEON_AB_DEBUG) console.error("AB-ERR:", e && e.message); }
 }
 
 async function appendLocalError(error) {
