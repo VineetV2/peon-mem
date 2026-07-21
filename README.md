@@ -35,6 +35,19 @@ automatically, from a daemon that never leaves your machine.
   DNS-rebinding protection, secret redaction at the injection boundary, path-traversal guards.
 
 
+
+## Why "Peon"?
+
+The name comes from Indian offices. Every office had a **peon** — the person who walked desk to
+desk all day: collect a file from this table, note who needs what, carry it to the next table,
+remember where everything is. Not the boss, not the star — but the one person the whole office
+quietly ran on. Nothing moved without him, and he never forgot where anything was.
+
+That's exactly this framework, with AI. Peon walks between your sessions and your projects —
+collects what happened at one desk (a session), files it in the right cabinet (a project brain),
+carries the relevant papers to the next desk before you ask (injection), and keeps the master
+ledger upstairs (the global brain). Quiet clerk. Perfect memory. The office runs on him.
+
 ## How Peon differs from existing memory tools
 
 | | **Peon** | mem0 | Letta/MemGPT | Zep/Graphiti | flat memory files (MEMORY.md) |
