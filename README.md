@@ -34,6 +34,25 @@ automatically, from a daemon that never leaves your machine.
 - **Local-first & locked down** — plain JSONL you can read, loopback-only daemon with
   DNS-rebinding protection, secret redaction at the injection boundary, path-traversal guards.
 
+
+## How Peon differs from existing memory tools
+
+| | **Peon** | mem0 | Letta/MemGPT | Zep/Graphiti | flat memory files (MEMORY.md) |
+|---|---|---|---|---|---|
+| Runs | **100% local daemon** | cloud or self-host | server | cloud/server | local |
+| Storage | human-readable JSONL you can `cat` | vector DB | DB | graph DB | markdown |
+| Memory model | **beliefs + verbatim episodic layer** | extracted facts | self-edited blocks | temporal knowledge graph | prose |
+| Hierarchy | **global parent brain → per-project child brains, inherited on every prompt** | user/agent/session scopes | per-agent | per-user | per-project file |
+| Capture | **automatic via hooks** (zero effort) | SDK calls you write | agent-managed | SDK calls | agent must remember to write |
+| Conflict handling | supersede/merge, **recoverable — never hard-deletes** | LLM may DELETE | self-edit | invalidation | overwrite |
+| Exact recall | episodic layer regression-tested (61% vs 17% belief-only, LongMemEval) | gist only | gist only | graph facts | whatever was written |
+| Observability | **live Neural Universe monitor + daily self-audit (STL) + serve telemetry** | dashboard | — | — | — |
+| Verification | **committed eval ledger; negative results kept** | vendor benchmarks | — | vendor benchmarks | — |
+
+Positioning in one line: mem0/Zep are memory **platforms for products you build**; Peon is a
+memory **brain for the coding agents you already use** — plug into Claude Code/Codex in five
+minutes, watch it think, audit every number.
+
 ## Quickstart
 
 Requirements: Node 20+, macOS or Linux. An [OpenRouter](https://openrouter.ai) API key is
@@ -82,6 +101,116 @@ Open `http://127.0.0.1:3737/monitor` and watch your brain grow.
 5. **Self-audit (STL)** — a daily job reports: recorded / injected / went-wrong / consolidation
    correctness, with serve-latency telemetry and a health verdict.
 
+
+## Full install (copy-paste)
+
+### 1. Daemon (always-on, macOS launchd)
+
+```bash
+node scripts/install-peon.mjs           # prints everything below filled in for YOUR paths
+```
+
+Or manually — `~/Library/LaunchAgents/com.peon.daemon.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.peon.daemon</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/ABSOLUTE/PATH/TO/peon/dist/daemon-cli.js</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict></plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.peon.daemon.plist
+curl http://127.0.0.1:3737/health        # → {"ok":true}
+```
+
+Linux: run `node dist/daemon-cli.js` under systemd (`Restart=always`).
+
+### 2. Claude Code — hooks (auto capture + injection)
+
+Merge into `~/.claude/settings.json` (replace the path):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command",
+      "command": "node /ABSOLUTE/PATH/TO/peon/scripts/claude-peon-hook.mjs" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command",
+      "command": "node /ABSOLUTE/PATH/TO/peon/scripts/claude-peon-hook.mjs" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command",
+      "command": "node /ABSOLUTE/PATH/TO/peon/scripts/claude-peon-hook.mjs" }] }]
+  }
+}
+```
+
+### 3. Claude Code — MCP server (search/inspect tools)
+
+```bash
+claude mcp add peon -- node /ABSOLUTE/PATH/TO/peon/dist/index.js
+```
+
+### 4. Codex / any MCP client
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.peon]
+command = "node"
+args = ["/ABSOLUTE/PATH/TO/peon/dist/index.js"]
+[mcp_servers.peon.env]
+PEON_DAEMON_URL = "http://127.0.0.1:3737"
+```
+
+Codex has no hooks — add usage rules to `~/.codex/AGENTS.md` telling it to call
+`start_session` + `get_context` at session start and `record_message` for durable facts
+(example block in [docs/](docs/)).
+
+### 5. Verify
+
+```bash
+curl "http://127.0.0.1:3737/context?projectPath=$PWD&query=test"   # JSON context
+open http://127.0.0.1:3737/monitor                                  # the Neural Universe
+```
+
+Start a Claude Code session in any project, say something decision-shaped, end the session —
+within a minute the monitor shows the belief. Next session injects it.
+
+### MCP tools exposed
+
+`start_session` · `record_message` · `record_event` · `end_session` · `get_context` ·
+`search_memory` · `inspect_brain` · `build_injection` · `query_projects` (cross-project search) ·
+`quality_report` · `remember_global` · `search_global_memory` · `import_global_memory` ·
+`evaluate_project` · `process_memory` · `maybe_process_memory`
+
+### Uninstall
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.peon.daemon.plist
+# remove the hook entries + MCP server from your agent config
+# your memory stays in <project>/.peon/ and ~/Library/Application\ Support/Peon/ — plain files, delete when ready
+```
+
+## Troubleshooting / FAQ
+
+- **No injection appearing?** `curl http://127.0.0.1:3737/health`; check hook is registered
+  (`claude` → run any prompt → monitor Systems page shows the request).
+- **431 errors on huge prompts?** Handled — the hook caps the retrieval query at 2k chars.
+- **No OpenRouter key?** Everything still runs; retrieval is lexical + episodic only
+  (semantic ranking and consolidation need a model). `PEON_EMBEDDING_MODE=ollama` works too.
+- **Cost?** Consolidation is gated (default: fires per ~6k new chars, ~cents/day with
+  flash-lite). Query embeddings are cached to disk — repeats are free.
+- **Multiple machines?** Brains are plain files in your repos — commit `.peon/` if you want
+  memory to travel (redact first: raw layer contains session text).
+- **Is my data sent anywhere?** Only consolidation/embedding calls to your configured model
+  provider. No telemetry, no cloud store. Daemon rejects non-loopback callers.
+
 ## Configuration (env)
 
 | Var | Default | Purpose |
@@ -123,3 +252,9 @@ ledger (`npm run eval`) let you verify retrieval changes on your own brain.
 ## License
 
 MIT © Vineet Vora
+
+## Contributing
+
+PRs welcome. Rules of the house: every retrieval/quality change ships with a test and an
+eval-ledger run (`npm run eval`); negative results get documented, not deleted; nothing may
+hard-delete user memory. `npm test` must stay green (255 tests).
