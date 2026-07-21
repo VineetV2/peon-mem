@@ -1,5 +1,7 @@
 # 🧠 Peon — a memory brain for your AI coding agents
 
+[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-255%20passing-brightgreen)](test/)
+
 **Local-first, hierarchical, self-improving memory for Claude Code, Codex, and any MCP client.**
 
 Your AI forgets everything between sessions. Peon doesn't. It records your sessions, consolidates
@@ -40,6 +42,9 @@ automatically, from a daemon that never leaves your machine.
 ![The Neural Universe — every belief is a star, projects are galaxies](docs/assets/neural-universe.png)
 *The live monitor: 18k real beliefs rendered as stars. Type to make matching beliefs flare; click one to inspect it.*
 
+![Search flare — type a query and matching beliefs light up across every galaxy](docs/assets/search-flare.gif)
+*Ask the field: typing "wulver cluster" makes 400+ matching beliefs flare while the rest dim, and the camera flies to them.*
+
 ## Why "Peon"?
 
 The name comes from Indian offices. Every office had a **peon** — the person who walked desk to
@@ -78,10 +83,10 @@ recommended (consolidation + semantic embeddings); without one Peon still works 
 One line:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VineetV2/peon-mem/main/install.sh | bash
+npm install -g peon-mem && peon-mem install
 ```
 
-(or, once you have the CLI: `npm install -g peon-mem && peon-mem install`)
+(no Node? `curl -fsSL https://raw.githubusercontent.com/VineetV2/peon-mem/main/install.sh | bash`)
 
 The guided setup asks four things:
 
