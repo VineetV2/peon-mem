@@ -1,10 +1,11 @@
 {
-  "name": "peon-memory",
+  "name": "peon-mem",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "bin": {
+    "peon-mem": "bin/peon-mem.mjs",
     "peon-mcp": "dist/index.js",
     "peon-daemon": "dist/daemon-cli.js"
   },
@@ -15,7 +16,8 @@
     "evaluate": "node scripts/evaluate-peon.mjs",
     "eval": "node scripts/eval-retrieval-labeled.mjs run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "PEON_QUERY_EMBED_CACHE=/tmp/peon-test-query-embed-cache.jsonl vitest run"
+    "test": "PEON_QUERY_EMBED_CACHE=/tmp/peon-test-query-embed-cache.jsonl vitest run",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0"
@@ -44,5 +46,13 @@
     "typescript": "^5.7.0",
     "vitest": "^4.0.0",
     "@types/node": "^22.0.0"
-  }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "scripts",
+    "docs/assets",
+    "README.md",
+    "LICENSE"
+  ]
 }

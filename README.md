@@ -75,11 +75,23 @@ minutes, watch it think, audit every number.
 Requirements: Node 20+, macOS or Linux. An [OpenRouter](https://openrouter.ai) API key is
 recommended (consolidation + semantic embeddings); without one Peon still works lexical-only.
 
+One line:
+
 ```bash
-git clone https://github.com/VineetV2/peon-mem && cd peon
-npm install
-npm run build
-node scripts/install-peon.mjs        # prints your exact hook + MCP config snippets
+npm install -g github:VineetV2/peon-mem && peon-mem install
+```
+
+That builds the package, starts the daemon as a service, wires your Claude Code hooks + MCP
+server (with a backup of your settings), and writes a config template. Then add your key to
+`~/Library/Application Support/Peon/.env` and open the monitor. `peon-mem install --dry-run`
+shows every action first; `peon-mem uninstall` reverses it (memory data is never touched).
+
+Or manually:
+
+```bash
+git clone https://github.com/VineetV2/peon-mem && cd peon-mem
+npm install && npm run build
+node bin/peon-mem.mjs install --dry-run   # inspect, then run without --dry-run
 ```
 
 Create `.env` in the repo root:
