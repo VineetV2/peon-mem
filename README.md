@@ -36,6 +36,10 @@ automatically, from a daemon that never leaves your machine.
 
 
 
+
+![The Neural Universe — every belief is a star, projects are galaxies](docs/assets/neural-universe.png)
+*The live monitor: 18k real beliefs rendered as stars. Type to make matching beliefs flare; click one to inspect it.*
+
 ## Why "Peon"?
 
 The name comes from Indian offices. Every office had a **peon** — the person who walked desk to
