@@ -17,12 +17,12 @@
     "eval": "node scripts/eval-retrieval-labeled.mjs run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "PEON_QUERY_EMBED_CACHE=/tmp/peon-test-query-embed-cache.jsonl vitest run",
-    "prepare": "npm run build"
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0"
   },
-  "description": "Local-first hierarchical memory brain for AI coding agents — auto-capture, LLM consolidation into beliefs, hybrid retrieval, per-prompt injection, a living Neural Universe monitor, and a daily self-improvement loop. Works with Claude Code, Codex, and any MCP client.",
+  "description": "Local-first hierarchical memory brain for AI coding agents \u2014 auto-capture, LLM consolidation into beliefs, hybrid retrieval, per-prompt injection, a living Neural Universe monitor, and a daily self-improvement loop. Works with Claude Code, Codex, and any MCP client.",
   "license": "MIT",
   "keywords": [
     "memory",
