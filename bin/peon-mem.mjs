@@ -44,12 +44,42 @@ function backupWrite(file, content) {
 }
 
 // ---------- app detection ----------
+// wire kinds: hooks+CLI (claude code) · toml (codex) · mcpServers JSON (most apps) ·
+// vscode "servers" JSON · zed context_servers · manual (UI-configured apps get instructions)
+const APP_SUPPORT = MAC ? join(HOME, "Library", "Application Support") : join(HOME, ".config");
 function detectApps() {
   return [
-    { id: "claude", name: "Claude Code", found: which("claude") || existsSync(join(HOME, ".claude")) },
-    { id: "codex",  name: "Codex",       found: existsSync(join(HOME, ".codex")) },
-    { id: "gemini", name: "Gemini CLI",  found: which("gemini") || existsSync(join(HOME, ".gemini")) },
-    { id: "cursor", name: "Cursor",      found: existsSync(join(HOME, ".cursor")) || existsSync("/Applications/Cursor.app") }
+    { id: "claude",   name: "Claude Code",    kind: "claude-code",
+      found: which("claude") || existsSync(join(HOME, ".claude")) },
+    { id: "claude-desktop", name: "Claude Desktop", kind: "json",
+      file: join(APP_SUPPORT, "Claude", "claude_desktop_config.json"),
+      found: existsSync(join(APP_SUPPORT, "Claude")) || existsSync("/Applications/Claude.app") },
+    { id: "codex",    name: "Codex",          kind: "toml",
+      found: existsSync(join(HOME, ".codex")) },
+    { id: "gemini",   name: "Gemini CLI",     kind: "json",
+      file: join(HOME, ".gemini", "settings.json"),
+      found: which("gemini") || existsSync(join(HOME, ".gemini")) },
+    { id: "cursor",   name: "Cursor",         kind: "json",
+      file: join(HOME, ".cursor", "mcp.json"),
+      found: existsSync(join(HOME, ".cursor")) || existsSync("/Applications/Cursor.app") },
+    { id: "windsurf", name: "Windsurf",       kind: "json",
+      file: join(HOME, ".codeium", "windsurf", "mcp_config.json"),
+      found: existsSync(join(HOME, ".codeium", "windsurf")) || existsSync("/Applications/Windsurf.app") },
+    { id: "vscode",   name: "VS Code (Copilot MCP)", kind: "vscode",
+      file: MAC ? join(APP_SUPPORT, "Code", "User", "mcp.json") : join(HOME, ".config", "Code", "User", "mcp.json"),
+      found: which("code") || existsSync(MAC ? join(APP_SUPPORT, "Code") : join(HOME, ".config", "Code")) },
+    { id: "zed",      name: "Zed",            kind: "zed",
+      file: join(HOME, ".config", "zed", "settings.json"),
+      found: existsSync(join(HOME, ".config", "zed")) || existsSync("/Applications/Zed.app") },
+    { id: "lmstudio", name: "LM Studio",      kind: "json",
+      file: join(HOME, ".lmstudio", "mcp.json"),
+      found: existsSync(join(HOME, ".lmstudio")) || existsSync("/Applications/LM Studio.app") },
+    { id: "chatgpt",  name: "ChatGPT Desktop", kind: "manual",
+      found: existsSync("/Applications/ChatGPT.app"),
+      how: "ChatGPT → Settings → Connectors → Advanced → enable Developer Mode → add MCP server: command=" },
+    { id: "perplexity", name: "Perplexity Desktop", kind: "manual",
+      found: existsSync("/Applications/Perplexity.app") || existsSync("/Applications/Perplexity- Ask Anything.app"),
+      how: "Perplexity → Settings → Connectors → Add Connector → Advanced: command=" }
   ];
 }
 
@@ -85,6 +115,21 @@ function wireJsonMcp(name, file) {
   if (s.mcpServers.peon) return log(`  ✔ ${name}: MCP already configured`);
   s.mcpServers.peon = { command: NODE, args: [MCP], env: { PEON_DAEMON_URL: "http://127.0.0.1:3737" } };
   act(`${name}: mcpServers.peon → ${file} (backup kept)`, () => backupWrite(file, JSON.stringify(s, null, 2) + "\n"));
+}
+
+function wireVsCode(file) {
+  let s = {}; try { s = JSON.parse(readFileSync(file, "utf8")); } catch {}
+  s.servers = s.servers || {};
+  if (s.servers.peon) return log("  ✔ VS Code: MCP already configured");
+  s.servers.peon = { type: "stdio", command: NODE, args: [MCP], env: { PEON_DAEMON_URL: "http://127.0.0.1:3737" } };
+  act("VS Code: servers.peon → " + file + " (backup kept)", () => backupWrite(file, JSON.stringify(s, null, 2) + "\n"));
+}
+function wireZed(file) {
+  let s = {}; try { s = JSON.parse(readFileSync(file, "utf8")); } catch {}
+  s.context_servers = s.context_servers || {};
+  if (s.context_servers.peon) return log("  ✔ Zed: MCP already configured");
+  s.context_servers.peon = { command: { path: NODE, args: [MCP] }, settings: {} };
+  act("Zed: context_servers.peon → " + file + " (backup kept)", () => backupWrite(file, JSON.stringify(s, null, 2) + "\n"));
 }
 
 // ---------- service ----------
@@ -126,6 +171,7 @@ if (cmd === "install") {
 
   // Step 1 — memory home
   log("Step 1/4 · Where should Peon's GLOBAL brain live?");
+  log("  (press Enter to accept the default)");
   const memoryHome = await ask("  memory home", DEFAULT_HOME);
   act("create " + memoryHome, () => mkdirSync(memoryHome, { recursive: true }));
 
@@ -176,10 +222,17 @@ if (cmd === "install") {
   const pick = await ask(`  install MCP into (comma ids or 'all') — detected: ${detected.join(",") || "none"}`, detected.join(",") || "none");
   const chosen = pick === "all" ? apps.map((a) => a.id) : pick.split(",").map((x) => x.trim()).filter(Boolean);
   for (const id of chosen) {
-    if (id === "claude") wireClaude();
-    else if (id === "codex") wireCodex();
-    else if (id === "gemini") wireJsonMcp("Gemini CLI", join(HOME, ".gemini", "settings.json"));
-    else if (id === "cursor") wireJsonMcp("Cursor", join(HOME, ".cursor", "mcp.json"));
+    const app = apps.find((a) => a.id === id);
+    if (!app) { log("  ⚠ unknown app id: " + id); continue; }
+    if (app.kind === "claude-code") wireClaude();
+    else if (app.kind === "toml") wireCodex();
+    else if (app.kind === "json") wireJsonMcp(app.name, app.file);
+    else if (app.kind === "vscode") wireVsCode(app.file);
+    else if (app.kind === "zed") wireZed(app.file);
+    else if (app.kind === "manual") {
+      log(`  → ${app.name} is configured in-app (no config file). In the app:`);
+      log(`     ${app.how}"${NODE}" args=["${MCP}"]`);
+    }
   }
 
   if (!DRY) {

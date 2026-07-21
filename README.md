@@ -88,8 +88,10 @@ The guided setup asks four things:
 1. **Where your global brain lives** (default: `~/Library/Application Support/Peon`)
 2. **Which LLM** — OpenRouter (one key, any model) · OpenAI · Anthropic · **Ollama (100% local & free)** · or skip
 3. Installs the **daemon** as an auto-start service
-4. **Detects your AI apps** — Claude Code, Codex, Gemini CLI, Cursor — and wires the MCP server
-   (+ hooks for Claude Code) into the ones you pick. Every touched config gets a `.peon-backup`.
+4. **Detects your AI apps** and wires the MCP server (+ hooks for Claude Code) into the ones you
+   pick — auto-configured: Claude Code, Claude Desktop, Codex, Gemini CLI, Cursor, Windsurf,
+   VS Code (Copilot MCP), Zed, LM Studio; detected with in-app instructions: ChatGPT Desktop,
+   Perplexity Desktop. Every touched config gets a `.peon-backup`.
 
 That builds the package, starts the daemon as a service, wires your Claude Code hooks + MCP
 server (with a backup of your settings), and writes a config template. Then add your key to
