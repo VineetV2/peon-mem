@@ -303,6 +303,17 @@ PEON_AI_MODE=off
 PEON_EMBEDDING_MODE=off
 ```
 
+The pipeline looks like this without a model. Hooks still capture everything you do into
+`<project>/.peon/raw/` as plain JSONL. As each event arrives, rule-based extraction files it
+into readable brain files: a line that starts with "we decided" or "always use" lands in
+`decisions.md`, preferences land in `preferences.md`, file paths land in `artifacts.md`. No
+model reads it; it's pattern matching, and you can open the files to see exactly what it
+caught. At your next session start, the hook asks the daemon for context, the daemon ranks
+those records by keyword match, recency, and importance, and injects the best ones into your
+prompt. The only step that disappears entirely is consolidation, the nightly LLM pass that
+compresses raw history into deduplicated beliefs. Without it your memory is a well-indexed
+journal instead of a distilled one. Search still finds things; nothing summarizes them.
+
 What still works (all of it deterministic code, no model anywhere):
 
 - **Capture.** Hooks record every prompt, tool call, and session event to plain JSONL in
