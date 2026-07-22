@@ -362,8 +362,27 @@ ledger (`npm run eval`) let you verify retrieval changes on your own brain.
 
 MIT © Vineet Vora
 
-## Contributing
+## Contributing — I'd love your help
 
-PRs welcome. Rules of the house: every retrieval/quality change ships with a test and an
-eval-ledger run (`npm run eval`); negative results get documented, not deleted; nothing may
-hard-delete user memory. `npm test` must stay green (255 tests).
+Peon is built and maintained by one person, and I'm genuinely open to help making it better.
+If any of this sounds interesting, jump in — issues, PRs, ideas, criticism of the architecture,
+or just telling me where it broke on your machine. No contribution is too small.
+
+**Where help would matter most right now:**
+
+- **Windows & Linux support** — the daemon install is macOS launchd today; systemd/Task
+  Scheduler equivalents need real users to test them.
+- **More agent integrations** — the wizard covers 11 apps; hooks-level capture (like the
+  Claude Code integration) for Codex, Cursor, and others would make memory richer everywhere.
+- **Retrieval quality** — the eval harness (`npm run eval`) makes experiments cheap: better
+  consolidation prompts, smarter staleness handling, local embedding models worth defaulting to.
+- **Benchmarks** — run the token A/B on YOUR repo and share the numbers, especially where Peon
+  loses. Negative results are first-class here.
+- **Docs & onboarding** — if the README or wizard confused you, that confusion is a bug report.
+
+**How:** open an issue at [github.com/VineetV2/peon-mem/issues](https://github.com/VineetV2/peon-mem/issues)
+or send a PR directly.
+
+Rules of the house: every retrieval/quality change ships with a test and an eval-ledger run
+(`npm run eval`); negative results get documented, not deleted; nothing may hard-delete user
+memory. `npm test` must stay green.
