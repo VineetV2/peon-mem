@@ -281,6 +281,33 @@ launchctl unload ~/Library/LaunchAgents/com.peon.daemon.plist
   swallow a project's memory.
 - The global brain lives in `~/Library/Application Support/Peon/global/` (macOS).
 
+## Measured: does memory actually save tokens?
+
+A/B test, real `claude -p` sessions, one question per session, same repo, same model. ON = Peon
+hooks active (memory injected at session start), OFF = `PEON_DISABLED=1` (agent falls back to
+reading files). 20 questions across procedures, past results, decisions, and current-state facts;
+15 clean ON/OFF pairs survived tooling issues. Token counts read from Claude Code's own
+session transcripts.
+
+| paired, n=15/arm | ON (Peon) | OFF | delta |
+|---|---|---|---|
+| avg tokens (in+out) | **511** | 878 | **−42%** |
+| median tokens | **225** | 1,048 | **−79%** |
+| cache-read tokens | 81.6k | 110.5k | 1.35× less |
+| cheaper arm | **ON wins 12/15** | | |
+
+Answer quality (graded against repo ground truth): 8 ties, 1 clear Peon win, 5 baseline wins,
+1 both-weak. The Peon win is the interesting one: a rule that was only ever stated in a
+conversation (a professor's citation policy from an email) — the baseline answered *"no such
+rule found"*, Peon recited it exactly. Conversation-borne knowledge has no file to grep.
+
+Honest caveats: the test repo has unusually good docs (a maintained research log), which makes
+the baseline strong — most repos aren't like that; n=15 is small; questions were picked to have
+known answers, not sampled from real usage. Two weaknesses this test exposed — a stale
+superseded belief outranking the newer truth, and token rows lost when consolidation outlived
+the hook timeout — are both fixed (stale-shadow demotion at retrieval; usage logged before
+consolidation).
+
 ## Honesty section
 
 Peon's development is eval-gated and keeps its negative results: an associative entity graph was
