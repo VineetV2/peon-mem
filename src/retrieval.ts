@@ -499,3 +499,67 @@ function clamp(value: number): number {
 function roundScore(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
+
+/**
+ * Stale-shadow demotion. Measured failure mode (token A/B, question x1): recall answered with a
+ * SUPERSEDED architecture description because the old belief was still active, semantically strong,
+ * and outranked the newer truth. When two active beliefs in the ranked window describe the same fact
+ * — near-duplicate vectors, or moderately similar with a shared entity and the same type — but were
+ * written in different eras, the older one is treated as a stale shadow of the newer: its score is
+ * scaled down so the newer belief always outranks it. Nothing is deleted or re-statused here; real
+ * supersession stays the consolidator's job. Pinned records are never demoted.
+ */
+export function demoteStaleShadows(
+  ranked: RankedMemoryRecord[],
+  vectorById: Map<string, EmbeddingVector> | undefined,
+  options: { scan?: number; hardSim?: number; softSim?: number; ageGapMs?: number; penalty?: number } = {}
+): RankedMemoryRecord[] {
+  if (!vectorById || vectorById.size === 0 || ranked.length < 2) return ranked;
+  const scan = options.scan ?? 30;
+  const hardSim = options.hardSim ?? 0.8;
+  const softSim = options.softSim ?? 0.6;
+  const ageGapMs = options.ageGapMs ?? 3 * 24 * 60 * 60 * 1000;
+  const penalty = options.penalty ?? 0.35;
+
+  const window = ranked.slice(0, scan);
+  const recordTime = (item: RankedMemoryRecord): number =>
+    timestamp(item.record.updatedAt || item.record.createdAt);
+  const shadowOf = new Map<string, string>(); // demoted id -> newer id it shadows
+
+  for (let i = 0; i < window.length; i += 1) {
+    for (let j = i + 1; j < window.length; j += 1) {
+      const a = window[i];
+      const b = window[j];
+      if (a.record.type !== b.record.type) continue;
+      if (a.record.status !== "active" || b.record.status !== "active") continue;
+      const va = vectorById.get(a.record.id);
+      const vb = vectorById.get(b.record.id);
+      if (!va || !vb) continue;
+      const sim = cosineSimilarity(va, vb);
+      if (sim < softSim) continue;
+      const sharedEntity = a.record.entities.some((e) => b.record.entities.includes(e));
+      if (sim < hardSim && !sharedEntity) continue;
+      const [older, newer] = recordTime(a) <= recordTime(b) ? [a, b] : [b, a];
+      if (recordTime(newer) - recordTime(older) < ageGapMs) continue;
+      if (older.record.pinned) continue;
+      if (!shadowOf.has(older.record.id)) shadowOf.set(older.record.id, newer.record.id);
+    }
+  }
+  if (shadowOf.size === 0) return ranked;
+
+  return ranked
+    .map((item) => {
+      const newerId = shadowOf.get(item.record.id);
+      if (!newerId) return item;
+      return {
+        ...item,
+        score: roundScore(item.score * penalty),
+        explanation: `${item.explanation}; stale shadow of newer belief ${newerId}`,
+        reasons: [...item.reasons, { kind: "status" as const, label: `stale shadow of ${newerId}`, score: 0 }]
+      };
+    })
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return timestamp(right.record.updatedAt) - timestamp(left.record.updatedAt);
+    });
+}

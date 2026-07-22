@@ -104,3 +104,19 @@ export declare function computeGraphActivation(seeds: RankedMemoryRecord[], pool
  * rankMemoryRecords' graphActivation option, which lets associations compete inside the top-K.
  */
 export declare function expandByEntityGraph(seeds: RankedMemoryRecord[], pool: MemoryRecord[], options?: GraphExpandOptions): RankedMemoryRecord[];
+/**
+ * Stale-shadow demotion. Measured failure mode (token A/B, question x1): recall answered with a
+ * SUPERSEDED architecture description because the old belief was still active, semantically strong,
+ * and outranked the newer truth. When two active beliefs in the ranked window describe the same fact
+ * — near-duplicate vectors, or moderately similar with a shared entity and the same type — but were
+ * written in different eras, the older one is treated as a stale shadow of the newer: its score is
+ * scaled down so the newer belief always outranks it. Nothing is deleted or re-statused here; real
+ * supersession stays the consolidator's job. Pinned records are never demoted.
+ */
+export declare function demoteStaleShadows(ranked: RankedMemoryRecord[], vectorById: Map<string, EmbeddingVector> | undefined, options?: {
+    scan?: number;
+    hardSim?: number;
+    softSim?: number;
+    ageGapMs?: number;
+    penalty?: number;
+}): RankedMemoryRecord[];

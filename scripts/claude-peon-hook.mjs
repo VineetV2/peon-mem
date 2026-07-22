@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createReadStream as fsCreateReadStream, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -171,14 +171,17 @@ try {
     // A response TURN finished — capture the summary and let Peon consolidate,
     // but keep the session ALIVE. Stop fires after every turn; the Claude session
     // (and the Peon session) continues across turns and only ends on SessionEnd.
+    // Token tracking runs FIRST: consolidation below can outlive the hook timeout
+    // ("Hook cancelled"), which used to silently drop the token ledger row.
+    await trackTokenUsage(input, projectPath, externalSessionId);
     const finalMessage = extractAssistantSummary(input);
     if (finalMessage.trim()) {
       await recordWithSession({ projectPath, externalSessionId, client: hookClient }, (sessionId) =>
         postJson("/events", { sessionId, type: "assistant_summary", content: finalMessage.slice(0, 2000) }));
     }
     await postJson("/process/auto", { projectPath, trigger: "turn_end" }).catch(() => undefined);
-    await trackTokenUsage(input, projectPath, externalSessionId);
   } else if (eventName === "SessionEnd") {
+    await trackTokenUsage(input, projectPath, externalSessionId);
     const finalMessage = extractAssistantSummary(input);
     if (finalMessage.trim()) {
       await recordWithSession({ projectPath, externalSessionId, client: hookClient }, (sessionId) =>
@@ -192,7 +195,6 @@ try {
       // stale session id gets replayed forever and recording silently dies.
       await removeSession(externalSessionId);
     }
-    await trackTokenUsage(input, projectPath, externalSessionId);
   }
 } catch (error) {
   await appendLocalError({
@@ -414,10 +416,9 @@ function safeName(value) {
 
 async function recordTokenUsage({ projectPath, externalSessionId, transcriptPath }) {
   try {
-    // Only log once per session — Stop fires on every response turn, not just session end.
-    const logged = JSON.parse(await readFile(TOKEN_AB_LOGGED_SESSIONS, "utf8").catch(() => "[]"));
-    if (logged.includes(externalSessionId)) return;
-
+    // Upsert per session: Stop fires after every turn, so each firing re-reads the full
+    // transcript and replaces this session's row — the last Stop leaves the final totals.
+    // (The old once-per-session gate froze turn-1 partials and dropped the rest.)
     const totals = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, model: "unknown" };
     const rl = createInterface({ input: fsCreateReadStream(transcriptPath), crlfDelay: Infinity });
     for await (const line of rl) {
@@ -433,6 +434,9 @@ async function recordTokenUsage({ projectPath, externalSessionId, transcriptPath
         if (obj?.message?.model) totals.model = obj.message.model;
       } catch { /* skip malformed lines */ }
     }
+    // A Stop can fire before any usage lines hit the transcript — never write an empty row.
+    if (totals.input + totals.output === 0) return;
+
     const peonEnabled = !/^(1|true|yes|on)$/i.test(process.env.PEON_DISABLED || "");
     const record = {
       ts: new Date().toISOString(),
@@ -446,12 +450,19 @@ async function recordTokenUsage({ projectPath, externalSessionId, transcriptPath
       cacheCreateTokens: totals.cacheCreate,
       totalTokens: totals.input + totals.output,
     };
+    if (process.env.PEON_AB_TAG) record.tag = process.env.PEON_AB_TAG;
     const dir = join(homedir(), "Library", "Application Support", "Peon");
     await mkdir(dir, { recursive: true });
-    await appendFile(TOKEN_AB_LOG, JSON.stringify(record) + "\n", "utf8");
-    // Mark session as logged (keep last 500 to avoid unbounded growth)
-    logged.push(externalSessionId);
-    await writeFile(TOKEN_AB_LOGGED_SESSIONS, JSON.stringify(logged.slice(-500)), "utf8");
+    // Rewrite the log with this session's previous rows dropped — file stays one row per session.
+    const existing = (await readFile(TOKEN_AB_LOG, "utf8").catch(() => ""))
+      .split("\n").filter(Boolean)
+      .filter((line) => {
+        try { return JSON.parse(line).sessionId !== externalSessionId; } catch { return true; }
+      });
+    existing.push(JSON.stringify(record));
+    const tmp = TOKEN_AB_LOG + ".tmp";
+    await writeFile(tmp, existing.slice(-2000).join("\n") + "\n", "utf8");
+    await rename(tmp, TOKEN_AB_LOG);
   } catch (e) { if (process.env.PEON_AB_DEBUG) console.error("AB-ERR:", e && e.message); }
 }
 

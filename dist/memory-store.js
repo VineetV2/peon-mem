@@ -7,7 +7,7 @@ import { cosineSimilarity, createEmbeddingClient } from "./embeddings.js";
 import { applyDelete, applyMerge, applyPin, applyUpdate } from "./memory-mutations.js";
 import { runSleepCycle } from "./brain.js";
 import { readdir, rm } from "node:fs/promises";
-import { rankMemoryRecords as rankWithRetrieval, computeGraphActivation, diversifyByMMR } from "./retrieval.js";
+import { rankMemoryRecords as rankWithRetrieval, computeGraphActivation, demoteStaleShadows, diversifyByMMR } from "./retrieval.js";
 import { currentAsOf, changesBetween } from "./temporal.js";
 import { inferCanonicalEntities, buildEntityRegistry, canonicalizeEntity } from "./entities.js";
 import { redactSecrets } from "./injection.js";
@@ -464,14 +464,14 @@ export class PeonMemoryStore {
         const limit = options.limit ?? 50;
         const direct = rankWithRetrieval(records, query, { limit, semantic });
         if (!options.expandGraph || direct.length === 0)
-            return direct;
+            return demoteStaleShadows(direct, semantic?.vectorById);
         // FUSED associative recall: spread activation from the direct hits through the entity graph,
         // then RE-RANK with that activation as a (damped) signal — so a strongly-associated belief can
         // enter the top-K and displace a weak direct hit, instead of being appended out of the window.
         const graphActivation = computeGraphActivation(direct, records);
         if (graphActivation.size === 0)
-            return direct;
-        return rankWithRetrieval(records, query, { limit, semantic, graphActivation });
+            return demoteStaleShadows(direct, semantic?.vectorById);
+        return demoteStaleShadows(rankWithRetrieval(records, query, { limit, semantic, graphActivation }), semantic?.vectorById);
     }
     /**
      * Rank records WITHOUT mutating anything — uses only embeddings already on disk
@@ -497,7 +497,7 @@ export class PeonMemoryStore {
                 // lexical-only on any embedding failure
             }
         }
-        return rankWithRetrieval(records, query, { limit: options.limit ?? 50, semantic });
+        return demoteStaleShadows(rankWithRetrieval(records, query, { limit: options.limit ?? 50, semantic }), semantic?.vectorById);
     }
     async buildSemanticInput(query, records) {
         if (!query || !query.trim() || !this.embeddingClient || !this.embeddingStore || records.length === 0) {

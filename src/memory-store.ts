@@ -11,6 +11,7 @@ import { readdir, rm } from "node:fs/promises";
 import {
   rankMemoryRecords as rankWithRetrieval,
   computeGraphActivation,
+  demoteStaleShadows,
   diversifyByMMR,
   type RankedMemoryRecord,
   type SemanticRetrievalInput
@@ -540,13 +541,13 @@ export class PeonMemoryStore {
     const semantic = await this.buildSemanticInput(query, records);
     const limit = options.limit ?? 50;
     const direct = rankWithRetrieval(records, query, { limit, semantic });
-    if (!options.expandGraph || direct.length === 0) return direct;
+    if (!options.expandGraph || direct.length === 0) return demoteStaleShadows(direct, semantic?.vectorById);
     // FUSED associative recall: spread activation from the direct hits through the entity graph,
     // then RE-RANK with that activation as a (damped) signal — so a strongly-associated belief can
     // enter the top-K and displace a weak direct hit, instead of being appended out of the window.
     const graphActivation = computeGraphActivation(direct, records);
-    if (graphActivation.size === 0) return direct;
-    return rankWithRetrieval(records, query, { limit, semantic, graphActivation });
+    if (graphActivation.size === 0) return demoteStaleShadows(direct, semantic?.vectorById);
+    return demoteStaleShadows(rankWithRetrieval(records, query, { limit, semantic, graphActivation }), semantic?.vectorById);
   }
 
   /**
@@ -575,7 +576,10 @@ export class PeonMemoryStore {
         // lexical-only on any embedding failure
       }
     }
-    return rankWithRetrieval(records, query, { limit: options.limit ?? 50, semantic });
+    return demoteStaleShadows(
+      rankWithRetrieval(records, query, { limit: options.limit ?? 50, semantic }),
+      semantic?.vectorById
+    );
   }
 
   private async buildSemanticInput(
