@@ -48,6 +48,7 @@ prompt. It runs as a daemon on your machine, and nothing leaves it.
 *The live monitor: 18k real beliefs rendered as stars. Type to make matching beliefs flare; click one to inspect it.*
 
 ![Search flare — type a query and matching beliefs light up across every galaxy](docs/assets/search-flare.gif)
+
 *Ask the field: typing "wulver cluster" makes 400+ matching beliefs flare while the rest dim, and the camera flies to them.*
 
 ## Why "Peon"?
