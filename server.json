@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.VineetV2/peon-mem",
-  "description": "Local-first memory brain for AI coding agents: session capture via hooks, belief consolidation, per-project and global brains, measured token savings.",
+  "description": "Local-first memory brain for AI coding agents: hooks capture sessions, beliefs injected per prompt.",
   "repository": {
     "url": "https://github.com/VineetV2/peon-mem",
     "source": "github"
@@ -13,7 +13,9 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "peon-mem",
       "version": "1.0.2",
-      "transport": { "type": "stdio" },
+      "transport": {
+        "type": "stdio"
+      },
       "environmentVariables": [
         {
           "name": "PEON_DAEMON_URL",
