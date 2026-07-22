@@ -8,7 +8,7 @@
  *   peon-mem doctor                        health + config check
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,8 @@ import { createInterface } from "node:readline/promises";
 
 const PKG = dirname(dirname(fileURLToPath(import.meta.url)));
 const HOME = homedir();
-const MAC = platform() === "darwin";
+// PEON_FORCE_PLATFORM lets CI and maintainers exercise the other OS's install path.
+const MAC = (process.env.PEON_FORCE_PLATFORM || platform()) === "darwin";
 const DEFAULT_HOME = MAC ? join(HOME, "Library", "Application Support", "Peon") : join(HOME, ".local", "share", "peon");
 const PLIST = join(HOME, "Library", "LaunchAgents", "com.peon.daemon.plist");
 const HOOK = join(PKG, "scripts", "claude-peon-hook.mjs");
@@ -156,8 +157,34 @@ function installService(memoryHome) {
       execFileSync("launchctl", ["load", PLIST]);
     });
   } else {
-    log("  → Linux: systemd user unit:");
-    log(`      ExecStart=${NODE} ${DAEMON}\n      WorkingDirectory=${memoryHome}\n      Restart=always`);
+    // Linux: write a real systemd user unit instead of printing a recipe.
+    const unitDir = join(HOME, ".config", "systemd", "user");
+    const unitFile = join(unitDir, "peon-mem.service");
+    const unit = `[Unit]
+Description=Peon memory daemon (local-first memory for AI coding agents)
+After=network.target
+
+[Service]
+ExecStart=${NODE} ${DAEMON}
+WorkingDirectory=${memoryHome}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+`;
+    act("daemon service (systemd user unit) → " + unitFile, () => {
+      mkdirSync(unitDir, { recursive: true });
+      writeFileSync(unitFile, unit);
+      // Enable + start when systemd is actually available; on failure fall back to instructions.
+      const r = spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "ignore" });
+      if (r.status === 0) {
+        spawnSync("systemctl", ["--user", "enable", "--now", "peon-mem.service"], { stdio: "ignore" });
+      }
+    });
+    log("  → if the daemon isn't running yet:");
+    log("      systemctl --user daemon-reload && systemctl --user enable --now peon-mem.service");
+    log("      loginctl enable-linger $USER   # keeps it running after logout");
   }
 }
 
@@ -249,6 +276,11 @@ if (cmd === "install") {
   rl?.close();
 } else if (cmd === "uninstall") {
   if (MAC && existsSync(PLIST)) act("stop + remove daemon service", () => spawnSync("launchctl", ["unload", PLIST], { stdio: "ignore" }));
+  const UNIT = join(HOME, ".config", "systemd", "user", "peon-mem.service");
+  if (!MAC && existsSync(UNIT)) act("stop + remove daemon service", () => {
+    spawnSync("systemctl", ["--user", "disable", "--now", "peon-mem.service"], { stdio: "ignore" });
+    rmSync(UNIT, { force: true });
+  });
   const settings = join(HOME, ".claude", "settings.json");
   try {
     const s = JSON.parse(readFileSync(settings, "utf8"));

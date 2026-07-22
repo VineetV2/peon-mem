@@ -98,7 +98,7 @@ The guided setup asks four things:
 1. **Where your global brain lives** (default: `~/Library/Application Support/Peon`)
 2. **Which LLM**: OpenRouter (one key, any model) · OpenAI · Anthropic · **Ollama (100% local
    & free)** · or skip
-3. Installs the **daemon** as an auto-start service
+3. Installs the **daemon** as an auto-start service (launchd on macOS, systemd user unit on Linux)
 4. **Detects your AI apps** and wires the MCP server (plus hooks for Claude Code) into the
    ones you pick. Auto-configured: Claude Code, Claude Desktop, Codex, Gemini CLI, Cursor,
    Windsurf, VS Code (Copilot MCP), Zed, LM Studio. Detected with in-app instructions: ChatGPT
@@ -186,7 +186,9 @@ launchctl load ~/Library/LaunchAgents/com.peon.daemon.plist
 curl http://127.0.0.1:3737/health        # → {"ok":true}
 ```
 
-Linux: run `node dist/daemon-cli.js` under systemd (`Restart=always`).
+Linux: the installer writes `~/.config/systemd/user/peon-mem.service` and enables it. Manual
+equivalent: `systemctl --user enable --now peon-mem.service`, plus `loginctl enable-linger $USER`
+so it survives logout. (Linux support is young — [issue #1](https://github.com/VineetV2/peon-mem/issues/1) tracks real-machine reports.)
 
 ### 2. Claude Code — hooks (auto capture + injection)
 
