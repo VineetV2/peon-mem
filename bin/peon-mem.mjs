@@ -205,7 +205,12 @@ if (cmd === "install") {
     if (!up) log("  → Ollama not running. Install: https://ollama.com  then: ollama pull llama3.2 && ollama pull nomic-embed-text");
     else log("  ✔ Ollama detected on :11434 — pull models if missing: ollama pull llama3.2 && ollama pull nomic-embed-text");
   } else {
-    envLines.push("# no provider configured — Peon runs lexical-only. Re-run `peon-mem install` anytime.");
+    envLines.push(
+      "# No-AI mode: no provider, no model calls, no embeddings. Peon runs as a",
+      "# deterministic memory recorder with lexical retrieval. Re-run `peon-mem install` anytime.",
+      "PEON_AI_MODE=off",
+      "PEON_EMBEDDING_MODE=off"
+    );
   }
   if (existsSync(envFile)) log("  ✔ keeping existing " + envFile);
   else act("write " + envFile, () => writeFileSync(envFile, envLines.join("\n") + "\n"));

@@ -281,6 +281,42 @@ launchctl unload ~/Library/LaunchAgents/com.peon.daemon.plist
   swallow a project's memory.
 - The global brain lives in `~/Library/Application Support/Peon/global/` (macOS).
 
+## Using Peon with NO AI at all
+
+Some people want a memory system that never calls a model — no API keys, no local LLM, no
+embeddings, fully deterministic. Peon supports that as a first-class mode: pick **skip** in the
+install wizard, or set two env vars in `<memory-home>/.env`:
+
+```
+PEON_AI_MODE=off
+PEON_EMBEDDING_MODE=off
+```
+
+**What still works (all of it deterministic code, no model anywhere):**
+
+- **Capture** — hooks record every prompt, tool call, and session event to plain JSONL in
+  `<project>/.peon/raw/`.
+- **Real-time brain files** — decisions, preferences, open questions, and artifacts are written
+  live to readable `.md` files by rule-based extraction as events arrive.
+- **Injection** — session-start context comes from those real-time files, query-focused and
+  budgeted, same as always.
+- **Search** — lexical retrieval (RRF over keyword rank + recency + importance + type priors).
+  No embeddings needed; this is the same degrade path the semantic stack falls back to.
+- **Episodic recall** — verbatim what-was-said lookup is lexical by design, so it is unaffected.
+- **Monitor UI, token tracking, cross-project search, backups** — all model-free.
+
+**What you give up:** consolidation (raw events are never distilled into deduplicated beliefs —
+memory grows as an append-only journal), semantic search (paraphrased queries need shared
+keywords), automatic entity extraction, and stale-shadow demotion (it compares embeddings).
+
+**Two escape hatches if you want curation without external AI:**
+
+1. `process_memory` accepts a pre-built `aiResult` — the coding agent you already run (Claude
+   Code, Codex) can do the distillation itself in-session and hand Peon the structured result.
+   Memory stays curated, and Peon itself never spends a token.
+2. Everything is plain JSONL/Markdown on disk — you can edit beliefs by hand or through the
+   monitor's memory endpoints. Peon backs up before every mutation.
+
 ## Measured: does memory actually save tokens?
 
 A/B test, real `claude -p` sessions, one question per session, same repo, same model. ON = Peon
