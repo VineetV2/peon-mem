@@ -102,7 +102,7 @@ The guided setup asks four things:
 3. Installs the **daemon** as an auto-start service (launchd on macOS, systemd user unit on Linux)
 4. **Detects your AI apps** and wires the MCP server (plus hooks for Claude Code) into the
    ones you pick. Auto-configured: Claude Code, Claude Desktop, Codex, Gemini CLI, Cursor,
-   Windsurf, VS Code (Copilot MCP), Zed, LM Studio. Detected with in-app instructions: ChatGPT
+   Windsurf, Cline, VS Code (Copilot MCP), Zed, LM Studio. Detected with in-app instructions: ChatGPT
    Desktop, Perplexity Desktop. Every touched config gets a `.peon-backup`.
 
 That builds the package, starts the daemon as a service, wires your Claude Code hooks + MCP
