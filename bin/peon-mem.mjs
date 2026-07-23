@@ -66,6 +66,9 @@ function detectApps() {
     { id: "windsurf", name: "Windsurf",       kind: "json",
       file: join(HOME, ".codeium", "windsurf", "mcp_config.json"),
       found: existsSync(join(HOME, ".codeium", "windsurf")) || existsSync("/Applications/Windsurf.app") },
+    { id: "cline",    name: "Cline",          kind: "json",
+      file: join(HOME, ".cline", "data", "settings", "cline_mcp_settings.json"),
+      found: which("cline") || existsSync(join(HOME, ".cline")) },
     { id: "vscode",   name: "VS Code (Copilot MCP)", kind: "vscode",
       file: MAC ? join(APP_SUPPORT, "Code", "User", "mcp.json") : join(HOME, ".config", "Code", "User", "mcp.json"),
       found: which("code") || existsSync(MAC ? join(APP_SUPPORT, "Code") : join(HOME, ".config", "Code")) },
@@ -288,7 +291,7 @@ if (cmd === "install") {
       s.hooks[ev] = s.hooks[ev].filter((h) => !JSON.stringify(h).includes("claude-peon-hook.mjs"));
     act("remove Peon hooks from " + settings, () => backupWrite(settings, JSON.stringify(s, null, 2) + "\n"));
   } catch {}
-  log("Remove [mcp_servers.peon] / mcpServers.peon from Codex/Gemini/Cursor configs if you added them.");
+  log("Remove [mcp_servers.peon] / mcpServers.peon from Codex/Gemini/Cursor/Cline configs if you added them.");
   log("Memory data untouched: <project>/.peon/ and " + DEFAULT_HOME);
   rl?.close();
 } else if (cmd === "daemon") {
