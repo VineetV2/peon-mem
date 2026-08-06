@@ -81,6 +81,26 @@ The short version: mem0 and Zep are memory platforms for products you build. Peo
 for the coding agents you already use. It plugs into Claude Code or Codex in about five
 minutes, and you can watch it think and audit every number it claims.
 
+## Your agents share one brain
+
+If you run more than one coding agent — Claude Code and Codex, say — they usually each live in
+their own bubble. Whatever you work out with one is gone when you switch to the other.
+
+Point them at the same project and Peon dissolves that wall. Both agents resolve to the same
+`.peon/` brain (Peon canonicalizes the project path, so the hook, a direct MCP call, and Codex
+all land on one store). So the memory flows between them:
+
+- Codex works out how your build pipeline runs and records it. Next time you open Claude Code
+  in that repo, it's already in the injected context.
+- Claude Code hits a gotcha and files it. Codex sees it the moment it calls `get_context` or
+  `search_memory`.
+- The global brain sits above both, so your preferences and rules follow you into every agent,
+  in every project.
+
+They aren't chatting in real time. It's a shared notebook both write in and both read from, so
+a decision made in one agent shows up in the other without you re-explaining it. One project,
+one memory, however many agents.
+
 ## Quickstart
 
 Requirements: Node 20+, macOS or Linux. An [OpenRouter](https://openrouter.ai) API key is
