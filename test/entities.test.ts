@@ -77,3 +77,27 @@ describe("resolveEntities", () => {
     expect(keys).toEqual(["src/daemon.ts"]); // model-supplied + content-extracted collapse to one
   });
 });
+
+describe("canonicalizeEntity — stopword rejection (false-conflict root cause)", () => {
+  it("rejects bare common words so they never become domain entities", () => {
+    for (const junk of ["not", "no", "yes", "use", "used", "with", "from", "true", "false", "avoid", "the", "our"]) {
+      expect(canonicalizeEntity(junk), `"${junk}" should be rejected`).toBeNull();
+    }
+  });
+
+  it("still keeps real lowercase domain concepts and products", () => {
+    expect(canonicalizeEntity("vllm")?.key).toBe("vllm");
+    expect(canonicalizeEntity("ollama")?.key).toBe("ollama");
+    expect(canonicalizeEntity("BIRD")?.key).toBe("bird");
+    expect(canonicalizeEntity("DTS-SQL")?.key).toBe("dts-sql");
+    expect(canonicalizeEntity("src/daemon.ts")?.key).toBe("src/daemon.ts");
+  });
+
+  it("does not surface a stopword entity from prose via resolveEntities", () => {
+    const ents = resolveEntities("We did not use the BIRD benchmark for this run");
+    const keys = ents.map((e) => e.key);
+    expect(keys).not.toContain("not");
+    expect(keys).not.toContain("use");
+    expect(keys).toContain("bird");
+  });
+});
