@@ -272,3 +272,37 @@ describe("Peon memory quality engine", () => {
     ]);
   });
 });
+
+describe("detectMemoryConflicts — same-topic gate (no false positives)", () => {
+  it("does NOT flag two beliefs that merely share an entity but discuss different things", () => {
+    const a = record("a", "Use a custom Python script to evaluate DTS-SQL on the BIRD benchmark", {
+      type: "decision", entities: ["bird"]
+    });
+    const b = record("b", "Avoid retrospective candidate pooling; the BIRD full dev run must be fresh", {
+      type: "decision", entities: ["bird"]
+    });
+    // shares only "bird", opposing use/avoid — but unrelated claims → must NOT conflict
+    expect(detectMemoryConflicts([a, b])).toHaveLength(0);
+  });
+
+  it("STILL flags a real contradiction: same claim, opposite value", () => {
+    const on = record("on", "Repair chain is enabled in the deployed pipeline for BIRD generation", {
+      type: "decision", entities: ["bird", "repair chain"]
+    });
+    const off = record("off", "Repair chain is disabled in the deployed pipeline for BIRD generation", {
+      type: "decision", entities: ["bird", "repair chain"]
+    });
+    // near-identical wording + shared entities + enabled/disabled → genuine conflict
+    expect(detectMemoryConflicts([on, off]).length).toBeGreaterThan(0);
+  });
+
+  it("flags opposition when content overlap is high even with one shared entity", () => {
+    const a = record("a", "The value sampling step is required for stage 2 generation quality", {
+      type: "decision", entities: ["stage 2"]
+    });
+    const b = record("b", "The value sampling step is optional for stage 2 generation quality", {
+      type: "decision", entities: ["stage 2"]
+    });
+    expect(detectMemoryConflicts([a, b]).length).toBeGreaterThan(0);
+  });
+});

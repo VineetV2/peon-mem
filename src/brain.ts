@@ -81,11 +81,22 @@ export function resolveConflicts(records: readonly MemoryRecord[], now: string, 
   // to active, loser archived (recoverable).
   const candidates = records.filter((r) => r.status === "active" || r.status === "conflicted");
   const conflicts = detectMemoryConflicts(candidates);
-  if (conflicts.length === 0) return { records: [...records], actions: [] };
   const byId = new Map(records.map((r) => [r.id, r]));
   const archived = new Set<string>();
   const reactivated = new Set<string>();
   const actions: BrainAction[] = [];
+  // Every belief that is part of a CURRENTLY-detected conflict. Anything still flagged
+  // "conflicted" but not in this set is an orphan — the consolidator (or an older, looser
+  // detector) benched it, but it no longer collides with anything. Left alone it stays out of
+  // recall forever; the July→August backlog was 100+ such orphans. Reactivate them below.
+  const inLiveConflict = new Set<string>();
+  for (const c of conflicts) { inLiveConflict.add(c.leftId); inLiveConflict.add(c.rightId); }
+  for (const r of records) {
+    if (r.status === "conflicted" && !inLiveConflict.has(r.id)) {
+      reactivated.add(r.id);
+      actions.push({ type: "resolve_conflict", detail: `reactivated stale conflict flag on "${r.content.slice(0, 40)}"`, affectedIds: [r.id] });
+    }
+  }
   for (const conflict of conflicts) {
     const left = byId.get(conflict.leftId);
     const right = byId.get(conflict.rightId);
