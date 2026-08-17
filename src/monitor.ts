@@ -28,6 +28,10 @@ const CLIENT_SCRIPT = String.raw`
   var ui = { project:"", filter:"all", search:null, focus:null, editing:null };
   var latest = null, overview = null, network = null, dash = null, busy = false;
   var ovLoadedAt = 0, netLoadedAt = 0, dashLoadedAt = 0, HEAVY_TTL = 12000;
+  // Load state for the heavy endpoints. Without this, a page renders its EMPTY state while data is
+  // still in flight — /network takes seconds on a large brain, so "No projects yet" was shown as
+  // fact for the whole wait, and stayed forever if the request failed (the catch was silent).
+  var loadState = { net:"idle", ov:"idle", dash:"idle" };  // idle | loading | ok | error
   var seenActivity = {}, activityFirstLoad = true, recentActivity = []; // for live popups
   function freshNow(){ try{ return Date.now(); }catch(e){ return 0; } }
   var KIND_ICON = { resolve_conflict:"⚖", merge_duplicate:"⛓", compress_cluster:"🗜", reinforce:"✦" };
@@ -112,7 +116,15 @@ const CLIENT_SCRIPT = String.raw`
   async function loadDashboard(force){
     if(!force && (freshNow()-dashLoadedAt)<HEAVY_TTL) return;
     dashLoadedAt=freshNow();
-    try{ dash=await fetch("/global/dashboard",{cache:"no-store"}).then(function(r){return r.json();}); renderBrainHome(); }catch(e){}
+    loadState.dash="loading";
+    try{
+      dash=await fetch("/global/dashboard",{cache:"no-store"}).then(function(r){
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.json();
+      });
+      loadState.dash="ok";
+    }catch(e){ loadState.dash="error"; dashLoadedAt=0; }  // failed load retries on next visit
+    renderBrainHome();
   }
   // ===== NEURAL UNIVERSE — every real belief is a star; projects are galaxies =====
   var UNI = { nodes:[], clusters:[], grid:{}, cell:46, cam:{x:0,y:0,z:1}, tx:{x:0,y:0,z:1},
@@ -504,7 +516,13 @@ const CLIENT_SCRIPT = String.raw`
         '<div class="pcname">'+esc(p.projectName)+dis+'</div>'+
         '<div class="pcstats"><span class="pcg">'+p.active+'</span> active beliefs'+(p.pinned?' · '+p.pinned+' pinned':'')+'</div>'+
         '<div class="pcgo">open insights →</div></button>';
-    }).join(""):'<div class="empty">No projects yet</div>';
+    }).join(""):(
+      // Never claim "no projects" while we are still asking, or when the ask failed — on a large
+      // brain /network takes seconds, and a silent failure used to look identical to an empty box.
+      loadState.net==="loading" ? '<div class="empty">Reading project brains…</div>' :
+      loadState.net==="error"   ? '<div class="empty">Could not reach the daemon. <button class="btn sm" id="proj-retry">Retry</button></div>' :
+                                  '<div class="empty">No projects yet</div>');
+    var pr=EL("proj-retry"); if(pr) pr.addEventListener("click",function(){ loadNetwork(true); });
     Array.prototype.forEach.call(document.querySelectorAll(".pcard"),function(b){ b.addEventListener("click",function(){ ui.project=b.getAttribute("data-p"); ui.search=null; ui.focus=null; overview=null; syncSwitcher(); location.hash="#/overview"; }); });
   }
 
@@ -513,7 +531,15 @@ const CLIENT_SCRIPT = String.raw`
     if(!ui.project) return;
     if(!force && (freshNow()-ovLoadedAt)<HEAVY_TTL) return; // throttle the heavy endpoint
     ovLoadedAt=freshNow();
-    try{ overview=await fetch("/overview?projectPath="+encodeURIComponent(ui.project),{cache:"no-store"}).then(function(r){return r.json();}); renderOverviewPage(); }catch(e){}
+    loadState.ov="loading";
+    try{
+      overview=await fetch("/overview?projectPath="+encodeURIComponent(ui.project),{cache:"no-store"}).then(function(r){
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.json();
+      });
+      loadState.ov="ok";
+    }catch(e){ loadState.ov="error"; ovLoadedAt=0; }  // failed load retries on next visit
+    renderOverviewPage();
   }
   function renderOverviewPage(){
     var sel=selected();
@@ -635,7 +661,18 @@ const CLIENT_SCRIPT = String.raw`
   async function loadNetwork(force){
     if(!force && (freshNow()-netLoadedAt)<HEAVY_TTL) return; // throttle the heavy endpoint
     netLoadedAt=freshNow();
-    try{ network=await fetch("/network",{cache:"no-store"}).then(function(r){return r.json();}); renderProjectsGrid(); }catch(e){}
+    loadState.net="loading"; renderProjectsGrid();
+    try{
+      network=await fetch("/network",{cache:"no-store"}).then(function(r){
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.json();
+      });
+      loadState.net="ok";
+    }catch(e){
+      loadState.net="error";
+      netLoadedAt=0;  // a failed load must not be throttled — let the next visit retry
+    }
+    renderProjectsGrid();
   }
 
   // ===== OPS (tokens + activity) =====
