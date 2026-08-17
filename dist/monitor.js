@@ -58,6 +58,8 @@ const CLIENT_SCRIPT = String.raw `
 
   function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function clip(v,n){ var s=String(v==null?"":v).trim(); return s.length>n?s.slice(0,n)+"…":s; }
+  // "summary" → "summaries", "fact" → "facts". Belief type names are user-visible in search results.
+  function plural(w,n){ if(n===1) return w; return /(s|x|z|ch|sh)$/.test(w)?w+"es":/[^aeiou]y$/.test(w)?w.slice(0,-1)+"ies":w+"s"; }
   function fmt(n){ return (Number(n)||0).toLocaleString("en-US"); }
   function tm(iso){ try{ return new Date(iso).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); }catch(e){ return ""; } }
   function name(p){ return String(p||"").split("/").filter(Boolean).pop()||"project"; }
@@ -316,6 +318,96 @@ const CLIENT_SCRIPT = String.raw `
     UNI.hits=set;
     if(hitsEl) hitsEl.textContent=m?(m+" MATCH"+(m>1?"ES":"")):"NO MATCH";
     if(m){ UNI.tx.x=sx/m; UNI.tx.y=sy/m; UNI.tx.z=Math.max(UNI.cam.z, m<20?1.1:0.55); }
+    uniResults(q, toks);
+  }
+
+  /* Readable answer for a query: an EXTRACTIVE summary (no model call — works with AI off) plus
+     the ranked hits. Flaring stars tell you a match exists; this tells you what it says. */
+  function uniResults(q, toks){
+    var el=EL("uni-results"); if(!el) return;
+    if(!q||!UNI.hits||!UNI.hits.size){ el.hidden=true; el.innerHTML=""; return; }
+    // Dedupe by record id: the same belief can be drawn as more than one star (a global belief
+    // also appears under a project galaxy), and counting/listing it twice would misreport memory.
+    var seen={}, hits=[];
+    UNI.nodes.forEach(function(n){
+      if(!UNI.hits.has(n.id)||seen[n.id]) return;
+      seen[n.id]=1; hits.push(n);
+    });
+    // Rank: query-term density, then belief strength/importance, then recency.
+    hits.forEach(function(n){
+      var hay=(n.rec.content+" "+(n.rec.entities||[]).join(" ")).toLowerCase(), d=0;
+      toks.forEach(function(t){ var i=0; while((i=hay.indexOf(t,i))>=0){ d++; i+=t.length; } });
+      var imp=(n.rec.score&&n.rec.score.importance)||0;
+      n._r=d*2 + imp*3 + (n.rec.strength||0) + (n.rec.recallCount||0)*0.2;
+      // Current truth outranks history: a superseded/archived phrasing must never sit above the
+      // active belief that replaced it (same reasoning as stale-shadow demotion in retrieval).
+      if(n.rec.status&&n.rec.status!=="active") n._r-=6;
+      if(n.rec.pinned) n._r+=3;
+      // Prefer beliefs that ANSWER the question over pointers to where an answer lives: a bare
+      // file path matching on its filename is not a summary. Prose types lead; paths sink.
+      var c=n.rec.content||"";
+      var pathish=/^[~/.]|^[A-Za-z]:\\/.test(c.trim()) && c.trim().split(/\s+/).length<=3;
+      if(pathish) n._r-=4;
+      if(n.rec.type==="decision"||n.rec.type==="fact"||n.rec.type==="preference") n._r+=1.5;
+    });
+    hits.sort(function(a,b){ return b._r-a._r; });
+
+    // Facets: what KIND of memory answered, and where it lives.
+    var byType={}, byProj={}, ents={}, oldest=null, newest=null;
+    hits.forEach(function(n){
+      var r=n.rec;
+      byType[r.type]=(byType[r.type]||0)+1;
+      byProj[n.cl.name]=(byProj[n.cl.name]||0)+1;
+      (r.entities||[]).forEach(function(e){ ents[e]=(ents[e]||0)+1; });
+      var t=r.updatedAt||r.createdAt;
+      if(t){ if(!oldest||t<oldest) oldest=t; if(!newest||t>newest) newest=t; }
+    });
+    var topEnts=Object.keys(ents).sort(function(a,b){ return ents[b]-ents[a]; }).slice(0,6);
+    var typeStr=Object.keys(byType).sort(function(a,b){ return byType[b]-byType[a]; })
+      .map(function(t){ return byType[t]+" "+plural(t.replace(/_/g," "),byType[t]); }).join(" · ");
+    var projStr=Object.keys(byProj).sort(function(a,b){ return byProj[b]-byProj[a]; }).slice(0,3).join(", ");
+
+    // The summary line: the single strongest belief, verbatim, plus the shape of the rest.
+    // Beliefs recorded against a file often read "<absolute path>: <the actual point>" — the path
+    // is provenance (kept in the hit list), so lead with the point instead of the filename.
+    var lead=String(hits[0].rec.content||"").replace(/^\s*[~/][^\s:]{12,}:\s*/,"");
+    var summary='<b>'+esc(clip(lead,260))+'</b>';
+    if(hits.length>1) summary+='<br><span style="color:var(--muted)">+ '+(hits.length-1)+' more across '+esc(projStr)+
+      (newest?', last updated '+esc(ago(newest)):'')+'.</span>';
+
+    var facets='<span class="ur-facet">'+esc(typeStr)+'</span>'+
+      topEnts.map(function(e){ return '<span class="ur-facet">'+esc(e)+'</span>'; }).join("");
+
+    var SHOW=12;
+    var list=hits.slice(0,SHOW).map(function(n,i){
+      var r=n.rec, meta=[];
+      if(r.status&&r.status!=="active") meta.push(r.status);
+      meta.push(n.cl.name);
+      if(r.recallCount) meta.push("recalled "+r.recallCount+"×");
+      if(r.updatedAt) meta.push(ago(r.updatedAt));
+      return '<button class="ur-hit" data-i="'+i+'">'+
+        '<div class="h-t" style="color:'+n.c+'">'+esc(r.type)+'</div>'+
+        esc(clip(r.content,180))+
+        '<div class="h-m">'+esc(meta.join(" · "))+'</div></button>';
+    }).join("");
+
+    el.hidden=false;
+    el.innerHTML='<button class="ui-x" id="ur-x">✕</button>'+
+      '<div class="ur-head">'+hits.length+' belief'+(hits.length>1?"s":"")+' answer "'+esc(clip(q,40))+'"</div>'+
+      '<div class="ur-sum">'+summary+'</div>'+
+      '<div class="ur-facets">'+facets+'</div>'+
+      '<div class="ur-list">'+list+'</div>'+
+      (hits.length>SHOW?'<div class="ur-more">showing top '+SHOW+' of '+hits.length+'</div>':"");
+
+    var x=EL("ur-x"); if(x) x.addEventListener("click",function(){ el.hidden=true; });
+    Array.prototype.forEach.call(el.querySelectorAll(".ur-hit"),function(b){
+      b.addEventListener("click",function(){
+        var n=hits[Number(b.getAttribute("data-i"))];
+        if(!n) return;
+        uniInspect(n);                                   // full detail + provenance
+        UNI.tx.x=n.x; UNI.tx.y=n.y; UNI.tx.z=Math.max(1.6,UNI.cam.z);  // fly to the star
+      });
+    });
   }
   function uniInspect(n){
     var el=EL("uni-inspect"); if(!el) return;
@@ -329,7 +421,19 @@ const CLIENT_SCRIPT = String.raw `
         '<span class="g">IMP <b>'+pct(r.score&&r.score.importance)+'</b><i class="bar"><i style="width:'+pct(r.score&&r.score.importance)+'%"></i></i></span>'+
         '<span class="g">CONF <b>'+pct(r.score&&r.score.confidence)+'</b><i class="bar"><i class="b2" style="width:'+pct(r.score&&r.score.confidence)+'%"></i></i></span></div>'+
       ((r.entities&&r.entities.length)?'<div class="ui-ents">'+r.entities.slice(0,8).map(function(e){return '<span class="ent mono">'+esc(e)+'</span>';}).join("")+'</div>':"")+
-      '<div class="ui-proj mono">'+esc(n.cl.name)+(r.updatedAt?' · '+esc(ago(r.updatedAt)):'')+'</div>'+
+      // Provenance: where this belief came from and how it has been used. Answers "why does my
+      // agent believe this, and is it still current?" without opening the JSONL by hand.
+      '<div class="ui-proj mono">'+(function(){
+        var p=[];
+        if(r.createdAt) p.push("learned "+ago(r.createdAt));
+        if(r.updatedAt&&r.updatedAt!==r.createdAt) p.push("updated "+ago(r.updatedAt));
+        if(r.recallCount) p.push("recalled "+r.recallCount+"×"+(r.lastRecalledAt?" (last "+ago(r.lastRecalledAt)+")":""));
+        if(r.pinned) p.push("pinned");
+        if(r.summarizedBy) p.push("folded into a summary");
+        if(r.source&&r.source.reason) p.push("via "+clip(r.source.reason,48));
+        if(r.provenance&&r.provenance.ref) p.push("source: "+clip(r.provenance.ref,44));
+        return esc(n.cl.name)+(p.length?' · '+esc(p.join(" · ")):'');
+      })()+'</div>'+
       (n.cl.path?'<button class="btn sm" id="ui-open">OPEN IN MEMORY BANKS →</button>':"");
     var x=EL("ui-x"); if(x) x.addEventListener("click",function(){ uniInspect(null); });
     var op=EL("ui-open"); if(op) op.addEventListener("click",function(){
@@ -873,6 +977,26 @@ const DOCUMENT = String.raw `<!doctype html>
   .ui-meta{display:flex; gap:14px; margin-bottom:9px;}
   .ui-ents{display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px;}
   .ui-proj{color:var(--faint); font-size:10px; margin-bottom:11px;}
+  /* Search RESULTS panel (right side, mirrors .uni-inspect on the left): the readable answer to
+     a query — an extractive summary of what memory says, then the ranked hits you can click. */
+  .uni-results{position:absolute; top:60px; right:14px; z-index:8; width:360px; max-height:calc(100% - 130px); overflow:auto;
+    background:linear-gradient(165deg, rgba(8,26,42,.96), rgba(4,14,26,.96)); border:1px solid var(--cyan); clip-path:var(--cham);
+    padding:16px; box-shadow:0 0 34px -8px rgba(89,227,255,.5);}
+  .ur-head{font-family:var(--mono); font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--cyan);
+    margin-bottom:10px; text-shadow:0 0 10px rgba(89,227,255,.6);}
+  .ur-sum{font-size:12px; line-height:1.6; color:var(--ink); border-left:2px solid var(--cyan);
+    padding:2px 0 2px 10px; margin-bottom:12px;}
+  .ur-sum b{color:var(--cyan-ink);}
+  .ur-facets{display:flex; flex-wrap:wrap; gap:5px; margin-bottom:12px;}
+  .ur-facet{font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase;
+    border:1px solid rgba(89,227,255,.35); color:var(--muted); padding:2px 6px; clip-path:var(--cham);}
+  .ur-list{display:flex; flex-direction:column; gap:7px;}
+  .ur-hit{text-align:left; width:100%; background:rgba(6,20,34,.7); border:1px solid rgba(89,227,255,.18);
+    padding:8px 10px; clip-path:var(--cham); cursor:pointer; color:var(--ink); font-size:11.5px; line-height:1.5;}
+  .ur-hit:hover{border-color:var(--cyan); background:rgba(10,30,48,.9);}
+  .ur-hit .h-t{font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--cyan); margin-bottom:3px;}
+  .ur-hit .h-m{font-family:var(--mono); font-size:9px; color:var(--faint); margin-top:4px;}
+  .ur-more{font-family:var(--mono); font-size:9.5px; color:var(--faint); margin-top:9px; text-align:center;}
   .uni-ticker{position:absolute; left:0; right:0; bottom:0; z-index:6; padding:8px 16px 10px;
     background:linear-gradient(180deg, transparent, rgba(2,8,16,.9) 40%); font-family:var(--mono); font-size:10px; color:var(--muted);}
   .utk{padding:2px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -918,6 +1042,7 @@ const DOCUMENT = String.raw `<!doctype html>
       <div class="uni-legend" id="uni-legend"></div>
       <div class="uni-tip mono" id="uni-tip" hidden></div>
       <div class="uni-inspect" id="uni-inspect" hidden></div>
+      <div class="uni-results" id="uni-results" hidden></div>
       <div class="uni-ticker" id="uni-ticker"></div>
     </div>
     <div id="bh-body"></div>
