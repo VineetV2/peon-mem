@@ -1,6 +1,6 @@
 # 🧠 Peon — a memory brain for your AI coding agents
 
-[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![downloads](https://img.shields.io/npm/dm/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-listed-6b4fbb)](https://registry.modelcontextprotocol.io)
+[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![downloads](https://img.shields.io/npm/dm/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-listed-6b4fbb)](https://registry.modelcontextprotocol.io) [![Star on GitHub](https://img.shields.io/github/stars/VineetV2/peon-mem?style=social)](https://github.com/VineetV2/peon-mem)
 
 **Local-first, hierarchical, self-improving memory for Claude Code, Codex, and any MCP client.**
 
@@ -433,3 +433,12 @@ or send a PR directly.
 Rules of the house: every retrieval/quality change ships with a test and an eval-ledger run
 (`npm run eval`); negative results get documented, not deleted; nothing may hard-delete user
 memory. `npm test` must stay green.
+
+---
+
+<div align="center">
+
+**If Peon is useful to you, [★ star it on GitHub](https://github.com/VineetV2/peon-mem)** — it is
+how other people building with coding agents find it.
+
+</div>
