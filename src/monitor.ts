@@ -748,6 +748,10 @@ const DOCUMENT = String.raw`<!doctype html>
     box-shadow:0 0 18px -4px rgba(89,227,255,.7), inset 0 0 12px rgba(89,227,255,.12); text-shadow:0 0 10px rgba(89,227,255,.8);}
   .switcher{background:rgba(5,18,32,.9); border:1px solid var(--line2); color:var(--cyan-ink); clip-path:var(--cham);
     padding:7px 12px; max-width:230px; font-size:12px; font-family:var(--mono);}
+  /* Quiet star link — same weight as the status text, never competes with the field. */
+  .ghlink{flex:none; font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); text-decoration:none; border:1px solid rgba(89,227,255,.25); padding:4px 9px; clip-path:var(--cham);}
+  .ghlink:hover{color:var(--cyan); border-color:var(--cyan); box-shadow:0 0 16px -6px rgba(89,227,255,.8);}
   .live{display:flex; align-items:center; gap:8px; font-size:10.5px; color:var(--muted); flex:none;
     font-family:var(--mono); text-transform:uppercase; letter-spacing:.14em;}
   .dot{width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 12px var(--cyan); animation:beat 2s infinite;}
@@ -1028,6 +1032,8 @@ const DOCUMENT = String.raw`<!doctype html>
     <a id="nav-ops" href="#/ops">Systems</a>
   </nav>
   <select class="switcher" id="switcher" aria-label="Active project"></select>
+  <a class="ghlink" href="https://github.com/VineetV2/peon-mem" target="_blank" rel="noopener noreferrer"
+     title="Peon is open source — star it so others find it">★ Star</a>
   <div class="live"><span class="dot" id="dot"></span><span id="status">linking…</span></div>
 </header>
 
