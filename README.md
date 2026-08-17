@@ -1,6 +1,6 @@
 # 🧠 Peon — a memory brain for your AI coding agents
 
-[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/)
+[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![downloads](https://img.shields.io/npm/dm/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-listed-6b4fbb)](https://registry.modelcontextprotocol.io)
 
 **Local-first, hierarchical, self-improving memory for Claude Code, Codex, and any MCP client.**
 
