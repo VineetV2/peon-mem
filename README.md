@@ -20,8 +20,9 @@ prompt. It runs as a daemon on your machine, and nothing leaves it.
   tools. Each project gets an isolated child brain. Every injection carries both.
 - **Two memory layers, honestly measured.** Consolidated *beliefs* (decisions, preferences,
   facts, artifacts) give you the gist. An *episodic* verbatim layer recovers the exact details
-  that lossy summaries drop. On LongMemEval, raw-episodic recall scored 61% where belief-only
-  scored 17%.
+  that lossy summaries drop. In my own LongMemEval run, raw-episodic recall scored 61% where
+  belief-only scored 17% — self-measured, not an independent benchmark; reproduce it with
+  `npm run eval`.
 - **Automatic capture and injection.** Claude Code hooks record messages and events, then
   inject a query-ranked memory block (with an `⚠ MOST RELEVANT` headline) into every prompt.
   You never have to remember to save anything.
@@ -73,7 +74,7 @@ upstairs (the global brain). Quiet clerk. Perfect memory. The office runs on him
 | Hierarchy | **global parent brain → per-project child brains, inherited on every prompt** | user/agent/session scopes | per-agent | per-user | per-project file |
 | Capture | **automatic via hooks** (zero effort) | SDK calls you write | agent-managed | SDK calls | agent must remember to write |
 | Conflict handling | supersede/merge, **recoverable — never hard-deletes** | LLM may DELETE | self-edit | invalidation | overwrite |
-| Exact recall | episodic layer regression-tested (61% vs 17% belief-only, LongMemEval) | gist only | gist only | graph facts | whatever was written |
+| Exact recall | episodic layer regression-tested (61% vs 17% belief-only on LongMemEval, self-measured) | gist only | gist only | graph facts | whatever was written |
 | Observability | **live Neural Universe monitor + daily self-audit (STL) + serve telemetry** | dashboard | — | — | — |
 | Verification | **committed eval ledger; negative results kept** | vendor benchmarks | — | vendor benchmarks | — |
 
