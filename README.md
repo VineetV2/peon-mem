@@ -102,6 +102,34 @@ They aren't chatting in real time. It's a shared notebook both write in and both
 a decision made in one agent shows up in the other without you re-explaining it. One project,
 one memory, however many agents.
 
+## Using Peon inside BagIdea Office
+
+[BagIdea Office](https://github.com/bagidea/bagidea-office) grants MCP servers per agent, so Peon
+works there today without either project changing code. In the office:
+
+**⚙ → TOOLS → MCP SERVERS**, add a server:
+
+| Field | Value |
+|---|---|
+| Name | `peon` |
+| Command | `npx -y -p peon-mem peon-mcp` |
+
+Then tick `mcp:peon` in an agent's edit screen. Sub-agents inherit it. The agent gets all 16 tools
+through the office's normal permission system.
+
+Note the `-p`: `npx -y peon-mem` runs the setup wizard, not the server. The MCP entrypoint is the
+`peon-mcp` bin. If you installed globally (`npm i -g peon-mem`), the command is just `peon-mcp`.
+
+Run `peon-mem install` once first so the daemon is running and your global brain exists — the MCP
+server talks to that daemon, and agents get nothing useful without it.
+
+What this gives you and what it does not: agents can **search and record memory when they choose
+to** (`search_memory`, `get_context`, `record_message`). It does not automatically inject memory
+into every prompt the way the Claude Code hooks do, because the office assembles its own prompts.
+Adding a rule to an agent's instructions — "call `get_context` before answering, record durable
+decisions" — closes most of that gap. The office's own `OFFICE.md`, per-agent memory and archive
+keep working exactly as they do now; Peon sits alongside them, not underneath.
+
 ## Quickstart
 
 Requirements: Node 20+, macOS or Linux. An [OpenRouter](https://openrouter.ai) API key is
