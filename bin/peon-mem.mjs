@@ -48,6 +48,11 @@ function backupWrite(file, content) {
 // wire kinds: hooks+CLI (claude code) · toml (codex) · mcpServers JSON (most apps) ·
 // vscode "servers" JSON · zed context_servers · manual (UI-configured apps get instructions)
 const APP_SUPPORT = MAC ? join(HOME, "Library", "Application Support") : join(HOME, ".config");
+const CODE_USER = join(APP_SUPPORT, "Code", "User");
+const CLINE_EXTENSION_HOME = join(CODE_USER, "globalStorage", "saoudrizwan.claude-dev");
+const CLINE_EXTENSION_FILE = join(CLINE_EXTENSION_HOME, "settings", "cline_mcp_settings.json");
+const CLINE_CLI_HOME = join(HOME, ".cline");
+const CLINE_CLI_FILE = join(CLINE_CLI_HOME, "data", "settings", "cline_mcp_settings.json");
 function detectApps() {
   return [
     { id: "claude",   name: "Claude Code",    kind: "claude-code",
@@ -67,11 +72,11 @@ function detectApps() {
       file: join(HOME, ".codeium", "windsurf", "mcp_config.json"),
       found: existsSync(join(HOME, ".codeium", "windsurf")) || existsSync("/Applications/Windsurf.app") },
     { id: "cline",    name: "Cline",          kind: "json",
-      file: join(HOME, ".cline", "data", "settings", "cline_mcp_settings.json"),
-      found: which("cline") || existsSync(join(HOME, ".cline")) },
+      file: existsSync(CLINE_EXTENSION_HOME) ? CLINE_EXTENSION_FILE : CLINE_CLI_FILE,
+      found: existsSync(CLINE_EXTENSION_HOME) || which("cline") || existsSync(CLINE_CLI_HOME) },
     { id: "vscode",   name: "VS Code (Copilot MCP)", kind: "vscode",
-      file: MAC ? join(APP_SUPPORT, "Code", "User", "mcp.json") : join(HOME, ".config", "Code", "User", "mcp.json"),
-      found: which("code") || existsSync(MAC ? join(APP_SUPPORT, "Code") : join(HOME, ".config", "Code")) },
+      file: join(CODE_USER, "mcp.json"),
+      found: which("code") || existsSync(join(APP_SUPPORT, "Code")) },
     { id: "zed",      name: "Zed",            kind: "zed",
       file: join(HOME, ".config", "zed", "settings.json"),
       found: existsSync(join(HOME, ".config", "zed")) || existsSync("/Applications/Zed.app") },
