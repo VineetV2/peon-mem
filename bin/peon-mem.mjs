@@ -275,7 +275,14 @@ if (cmd === "install") {
     log("\n" + ((await health()) ? "✔ daemon healthy — http://127.0.0.1:3737" : "⚠ daemon not answering — check " + memoryHome + "/daemon.err.log"));
   }
   log("🌌 Monitor (the Neural Universe): http://127.0.0.1:3737/monitor");
-  log("Memory lives in <project>/.peon/ (child brains) + " + memoryHome + " (global brain)\n");
+  log("Memory lives in <project>/.peon/ (child brains) + " + memoryHome + " (global brain)");
+  // People who just installed are the ones most able to say whether this works. Ask once, here —
+  // never nag from the daemon or the hooks, which run constantly and would become noise.
+  log("");
+  log("  Peon is built by one person. Two things that genuinely help:");
+  log("    ★ star it, so others find it   https://github.com/VineetV2/peon-mem");
+  log("    ✎ tell me what broke or felt confusing — that is a bug report");
+  log("      https://github.com/VineetV2/peon-mem/issues\n");
   rl?.close();
 } else if (cmd === "uninstall") {
   if (MAC && existsSync(PLIST)) act("stop + remove daemon service", () => spawnSync("launchctl", ["unload", PLIST], { stdio: "ignore" }));

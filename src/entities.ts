@@ -32,6 +32,27 @@ const SRC_ROOTS = new Set(["src", "lib", "scripts", "test", "tests", "app", "app
 const FILE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|html|css|scss|py|ipynb|pdf|txt|yml|yaml|toml|sh|sql|rs|go|java|rb|c|cpp|h)$/i;
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:[.#][A-Za-z_$][\w$]*)*$/;
 
+// Bare common words that are never useful DOMAIN entities. Without this gate a lowercase token
+// like "not" / "use" / "no" falls through the identifier branch and becomes a domain concept —
+// then two unrelated beliefs that merely both contain that word "share an entity" and get
+// false-flagged as conflicting. Only applies to plain lowercase words: file paths, product
+// acronyms (BIRD, DTS-SQL), and code symbols carry caps/digits/separators and never land here.
+const ENTITY_STOPWORDS = new Set([
+  "the", "this", "that", "these", "those", "a", "an", "it", "its", "we", "i", "you", "he", "she",
+  "they", "them", "our", "your", "their", "his", "her",
+  "if", "when", "then", "than", "for", "and", "but", "or", "nor", "so", "to", "in", "on", "of",
+  "at", "by", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "done",
+  "not", "no", "yes", "none", "null", "na", "nan", "true", "false",
+  "use", "used", "using", "avoid", "add", "added", "fix", "fixed", "make", "made", "set", "run",
+  "ran", "get", "got", "put", "new", "old", "now", "also", "with", "without", "from", "into",
+  "enable", "enabled", "disable", "disabled", "allow", "allowed", "deny", "forbidden",
+  "required", "optional", "about", "what", "which", "how", "why", "who", "where"
+]);
+
+function isEntityStopword(key: string): boolean {
+  return ENTITY_STOPWORDS.has(key.toLowerCase());
+}
+
 /** Canonicalize one raw entity string. Returns null for junk (empty, too long, pure noise). */
 export function canonicalizeEntity(raw: string): CanonicalEntity | null {
   const s = (raw ?? "").trim().replace(/^[`'"]+|[`'"]+$/g, "").trim();
@@ -66,11 +87,14 @@ export function canonicalizeEntity(raw: string): CanonicalEntity | null {
     const productLike = internalCaps && (/^[A-Z]/.test(s) || s === s.toUpperCase());
     if (productLike) return { key: s.toLowerCase(), name: s, kind: "concept", namespace: "domain" };
     if (/[A-Z_]/.test(s.slice(1))) return { key: s, name: s, kind: "symbol", namespace: "code" };
-    // lowercase single token (e.g. "vllm", "ollama") — treat as a domain concept
+    // lowercase single token (e.g. "vllm", "ollama") — treat as a domain concept, unless it's a
+    // bare common word ("not", "use", "no") that would only create noise and false conflicts.
+    if (isEntityStopword(s)) return null;
     return { key: s.toLowerCase(), name: s, kind: "concept", namespace: "domain" };
   }
 
   // Multi-word phrase / proper noun → domain concept.
+  if (isEntityStopword(s)) return null;
   return { key: s.toLowerCase(), name: s, kind: "concept", namespace: "domain" };
 }
 

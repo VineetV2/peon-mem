@@ -134,6 +134,13 @@ export function detectMemoryConflicts(records: MemoryRecord[]): MemoryConflict[]
       const reason = opposingLanguageReason(left.content, right.content);
       if (!reason) continue;
 
+      // Same-topic gate. A shared entity + one opposing word-pair somewhere in two long beliefs
+      // is a weak signal: on a research brain, dozens of beliefs all mention "BIRD" and one says
+      // "use X" while an unrelated one says "avoid Y". They don't contradict — they're just both
+      // about BIRD. Require the two beliefs to actually be discussing the same thing before
+      // calling it a conflict: several shared entities, or real content overlap beyond the token.
+      if (!sameTopic(left, right)) continue;
+
       conflicts.push({
         entity,
         leftId: left.id,
@@ -353,6 +360,44 @@ function sharedEntity(left: MemoryRecord, right: MemoryRecord): string | undefin
     if (match) return leftEntity.trim() || match;
   }
   return undefined;
+}
+
+const TOPIC_STOP = new Set([
+  "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for", "with", "is", "are", "was",
+  "were", "be", "as", "at", "by", "it", "this", "that", "we", "our", "use", "used", "using", "from",
+  "not", "no", "yes", "do", "does", "did", "so", "if", "then", "than", "when", "which", "what"
+]);
+
+/** Content tokens (lowercased, ≥3 chars, minus stopwords) — the topical fingerprint of a belief. */
+function contentTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of (text ?? "").toLowerCase().split(/[^a-z0-9]+/)) {
+    if (raw.length >= 3 && !TOPIC_STOP.has(raw)) out.add(raw);
+  }
+  return out;
+}
+
+/**
+ * True when two beliefs are actually discussing the same thing — the precondition for their
+ * opposing language to be a real contradiction rather than a coincidence. Satisfied by either
+ * multiple shared entities (a strong same-subject signal) or meaningful content overlap
+ * (Jaccard of content tokens above a floor). Prevents "both mention BIRD, one says use / one
+ * says avoid, about unrelated things" from being flagged.
+ */
+function sameTopic(left: MemoryRecord, right: MemoryRecord): boolean {
+  const le = new Set(left.entities.map(normalizeEntity));
+  const re = new Set(right.entities.map(normalizeEntity));
+  let sharedEntities = 0;
+  for (const e of le) if (re.has(e)) sharedEntities += 1;
+  if (sharedEntities >= 2) return true;
+
+  const lt = contentTokens(left.content);
+  const rt = contentTokens(right.content);
+  if (lt.size === 0 || rt.size === 0) return false;
+  let inter = 0;
+  for (const t of lt) if (rt.has(t)) inter += 1;
+  const jaccard = inter / (lt.size + rt.size - inter);
+  return jaccard >= 0.25;
 }
 
 function opposingLanguageReason(left: string, right: string): string | undefined {

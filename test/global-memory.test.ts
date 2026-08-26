@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PeonGlobalMemoryStore } from "../src/global-memory.js";
@@ -20,9 +20,27 @@ function tempGlobalDir(): string {
 
 describe("PeonGlobalMemoryStore", () => {
   it("uses the Peon application support global directory by default", () => {
-    expect(PeonGlobalMemoryStore.defaultDirectory()).toBe(
-      "/Users/vora/Library/Application Support/Peon/global"
-    );
+    // The suite sets PEON_GLOBAL_DIR for isolation; clear it to observe the real default.
+    const saved = process.env.PEON_GLOBAL_DIR;
+    delete process.env.PEON_GLOBAL_DIR;
+    try {
+      expect(PeonGlobalMemoryStore.defaultDirectory()).toBe(
+        join(homedir(), "Library", "Application Support", "Peon", "global")
+      );
+    } finally {
+      if (saved !== undefined) process.env.PEON_GLOBAL_DIR = saved;
+    }
+  });
+
+  it("PEON_GLOBAL_DIR overrides the default global directory", () => {
+    const saved = process.env.PEON_GLOBAL_DIR;
+    process.env.PEON_GLOBAL_DIR = "/tmp/peon-custom-global";
+    try {
+      expect(PeonGlobalMemoryStore.defaultDirectory()).toBe("/tmp/peon-custom-global");
+    } finally {
+      if (saved === undefined) delete process.env.PEON_GLOBAL_DIR;
+      else process.env.PEON_GLOBAL_DIR = saved;
+    }
   });
 
   it("appends global memory records and persists them as JSONL", async () => {

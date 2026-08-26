@@ -25,7 +25,12 @@ export class PeonGlobalMemoryStore {
   private constructor(private readonly globalDir: string) {}
 
   static defaultDirectory(): string {
-    return PeonGlobalMemoryStore.defaultGlobalDir;
+    // PEON_GLOBAL_DIR relocates the global brain. Tests set it to a temp dir so they never read
+    // or write the real global store at ~/Library/Application Support/Peon/global — without this
+    // a tool created without an explicit globalMemoryDir falls back to the real store, which made
+    // cross-project isolation tests flaky and let test runs pollute the user's actual global brain.
+    const override = process.env.PEON_GLOBAL_DIR;
+    return override && override.trim() ? override.trim() : PeonGlobalMemoryStore.defaultGlobalDir;
   }
 
   static async open(options: OpenGlobalMemoryStoreOptions = {}): Promise<PeonGlobalMemoryStore> {

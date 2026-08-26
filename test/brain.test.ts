@@ -114,3 +114,30 @@ describe("runSleepCycle (the full autonomous pass)", () => {
     expect(actions.map((a) => a.type)).toContain("resolve_conflict");
   });
 });
+
+describe("resolveConflicts — reactivates orphaned conflict flags (self-heals the backlog)", () => {
+  test("a conflicted belief with no live counterpart is promoted back to active", () => {
+    const orphan = rec({ id: "orphan", status: "conflicted", content: "value sampling helps stage 2", entities: ["stage 2"] });
+    const unrelated = rec({ id: "u", status: "active", content: "cluster jobs run on Wulver", entities: ["wulver"] });
+    const { records: out, actions } = resolveConflicts([orphan, unrelated], NOW);
+    const o = out.find((r) => r.id === "orphan")!;
+    expect(o.status).toBe("active");
+    expect(actions.some((a) => a.detail.includes("reactivated stale conflict flag"))).toBe(true);
+  });
+
+  test("a genuine live conflict is still resolved (loser archived), not blindly reactivated", () => {
+    const on = rec({ id: "on", status: "conflicted", content: "repair chain is enabled for BIRD generation", entities: ["bird", "repair chain"], score: { importance: 0.6, confidence: 0.9 } });
+    const off = rec({ id: "off", status: "conflicted", content: "repair chain is disabled for BIRD generation", entities: ["bird", "repair chain"], score: { importance: 0.6, confidence: 0.4 } });
+    const { records: out } = resolveConflicts([on, off], NOW);
+    const statuses = Object.fromEntries(out.map((r) => [r.id, r.status]));
+    expect(statuses.on).toBe("active");     // higher confidence wins
+    expect(statuses.off).toBe("archived");  // loser archived, not left conflicted
+  });
+
+  test("no conflicts and no orphans → nothing changes", () => {
+    const a = rec({ id: "a", status: "active", content: "alpha" });
+    const b = rec({ id: "b", status: "active", content: "beta" });
+    const { actions } = resolveConflicts([a, b], NOW);
+    expect(actions).toHaveLength(0);
+  });
+});

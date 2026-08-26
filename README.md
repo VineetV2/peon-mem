@@ -1,6 +1,6 @@
 # 🧠 Peon — a memory brain for your AI coding agents
 
-[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/)
+[![npm](https://img.shields.io/npm/v/peon-mem)](https://www.npmjs.com/package/peon-mem) [![downloads](https://img.shields.io/npm/dm/peon-mem)](https://www.npmjs.com/package/peon-mem) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](test/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-listed-6b4fbb)](https://registry.modelcontextprotocol.io) [![Star on GitHub](https://img.shields.io/github/stars/VineetV2/peon-mem?style=social)](https://github.com/VineetV2/peon-mem)
 
 **Local-first, hierarchical, self-improving memory for Claude Code, Codex, and any MCP client.**
 
@@ -20,8 +20,9 @@ prompt. It runs as a daemon on your machine, and nothing leaves it.
   tools. Each project gets an isolated child brain. Every injection carries both.
 - **Two memory layers, honestly measured.** Consolidated *beliefs* (decisions, preferences,
   facts, artifacts) give you the gist. An *episodic* verbatim layer recovers the exact details
-  that lossy summaries drop. On LongMemEval, raw-episodic recall scored 61% where belief-only
-  scored 17%.
+  that lossy summaries drop. In my own LongMemEval run, raw-episodic recall scored 61% where
+  belief-only scored 17% — self-measured, not an independent benchmark; reproduce it with
+  `npm run eval`.
 - **Automatic capture and injection.** Claude Code hooks record messages and events, then
   inject a query-ranked memory block (with an `⚠ MOST RELEVANT` headline) into every prompt.
   You never have to remember to save anything.
@@ -73,13 +74,33 @@ upstairs (the global brain). Quiet clerk. Perfect memory. The office runs on him
 | Hierarchy | **global parent brain → per-project child brains, inherited on every prompt** | user/agent/session scopes | per-agent | per-user | per-project file |
 | Capture | **automatic via hooks** (zero effort) | SDK calls you write | agent-managed | SDK calls | agent must remember to write |
 | Conflict handling | supersede/merge, **recoverable — never hard-deletes** | LLM may DELETE | self-edit | invalidation | overwrite |
-| Exact recall | episodic layer regression-tested (61% vs 17% belief-only, LongMemEval) | gist only | gist only | graph facts | whatever was written |
+| Exact recall | episodic layer regression-tested (61% vs 17% belief-only on LongMemEval, self-measured) | gist only | gist only | graph facts | whatever was written |
 | Observability | **live Neural Universe monitor + daily self-audit (STL) + serve telemetry** | dashboard | — | — | — |
 | Verification | **committed eval ledger; negative results kept** | vendor benchmarks | — | vendor benchmarks | — |
 
 The short version: mem0 and Zep are memory platforms for products you build. Peon is memory
 for the coding agents you already use. It plugs into Claude Code or Codex in about five
 minutes, and you can watch it think and audit every number it claims.
+
+## Your agents share one brain
+
+If you run more than one coding agent — Claude Code and Codex, say — they usually each live in
+their own bubble. Whatever you work out with one is gone when you switch to the other.
+
+Point them at the same project and Peon dissolves that wall. Both agents resolve to the same
+`.peon/` brain (Peon canonicalizes the project path, so the hook, a direct MCP call, and Codex
+all land on one store). So the memory flows between them:
+
+- Codex works out how your build pipeline runs and records it. Next time you open Claude Code
+  in that repo, it's already in the injected context.
+- Claude Code hits a gotcha and files it. Codex sees it the moment it calls `get_context` or
+  `search_memory`.
+- The global brain sits above both, so your preferences and rules follow you into every agent,
+  in every project.
+
+They aren't chatting in real time. It's a shared notebook both write in and both read from, so
+a decision made in one agent shows up in the other without you re-explaining it. One project,
+one memory, however many agents.
 
 ## Quickstart
 
@@ -413,3 +434,12 @@ or send a PR directly.
 Rules of the house: every retrieval/quality change ships with a test and an eval-ledger run
 (`npm run eval`); negative results get documented, not deleted; nothing may hard-delete user
 memory. `npm test` must stay green.
+
+---
+
+<div align="center">
+
+**If Peon is useful to you, [★ star it on GitHub](https://github.com/VineetV2/peon-mem)** — it is
+how other people building with coding agents find it.
+
+</div>
