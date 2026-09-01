@@ -484,6 +484,15 @@ const CLIENT_SCRIPT = String.raw `
 
   function renderBrainHome(){
     var d=dash||{totalBeliefs:0,byType:{},topEntities:[],recentActions:[],records:[]};
+    var firstRun=loadState.dash==="ok" && !projects().length && !Number(d.totalBeliefs||0);
+    var viz=EL("brainviz"), welcome=EL("first-run");
+    if(viz) viz.classList.toggle("first-run",firstRun);
+    if(welcome) welcome.hidden=!firstRun;
+    if(firstRun){
+      if(UNI.raf){ cancelAnimationFrame(UNI.raf); UNI.raf=0; }
+      EL("bh-body").innerHTML='<section class="panel first-run-details"><div class="phead"><div class="ht"><h2>What happens next</h2><span class="note">local-first · nothing leaves this machine</span></div></div><ol><li>Use your coding agent as usual. Peon records the session locally.</li><li>After a session has enough useful context, Peon turns it into searchable memory.</li><li>Come back here to review what Peon kept before it helps on the next prompt.</li></ol><p class="cap">No beliefs yet is normal. This view fills in after Peon has something useful to remember.</p></section>';
+      return;
+    }
     buildUniverse(); uniWire(); uniStart(); uniTicker(); uniHealth();
     var types=Object.keys(d.byType||{}).map(function(t){return [t,d.byType[t]];}).sort(function(a,b){return b[1]-a[1];});
     var html='<section class="panel"><div class="phead"><div class="ht"><h2>Global memory</h2><span class="note">cross-cutting facts every project recalls · '+fmt(d.totalBeliefs)+' beliefs</span></div></div>'+
@@ -820,6 +829,15 @@ const DOCUMENT = String.raw `<!doctype html>
   .phead .cap{font-size:11px; color:var(--faint); margin-top:4px;}
   .phead .note{font-size:11px; color:var(--faint); font-family:var(--mono);}
   .empty{color:var(--faint); font-size:12.5px; padding:12px 0; font-family:var(--mono);}
+  .uniwrap.first-run{min-height:320px; display:grid; place-items:center; padding:24px;}
+  .uniwrap.first-run canvas,.uniwrap.first-run .uni-search,.uniwrap.first-run .uni-hud,.uniwrap.first-run .uni-legend,.uniwrap.first-run .uni-tip,.uniwrap.first-run .uni-inspect,.uniwrap.first-run .uni-results,.uniwrap.first-run .uni-ticker{display:none;}
+  .first-run-card{max-width:560px; padding:26px; background:linear-gradient(165deg,rgba(8,27,43,.94),rgba(5,18,32,.9)); border:1px solid var(--line2); clip-path:var(--cham); box-shadow:0 18px 44px -28px rgba(89,227,255,.75);}
+  .first-run-card h2{margin:0 0 8px; color:#eaffff; font-size:24px; letter-spacing:.03em;}
+  .first-run-card p{margin:0; color:var(--muted); font-size:14px; line-height:1.6;}
+  .first-run-card .first-kicker{margin-bottom:8px; color:var(--cyan); font-family:var(--mono); font-size:10px; font-weight:760; letter-spacing:.18em; text-transform:uppercase;}
+  .first-run-details ol{margin:0; padding-left:22px; color:var(--muted); font-size:13px; line-height:1.7;}
+  .first-run-details li+li{margin-top:5px;}
+  .first-run-details .cap{margin-top:12px;}
   .pagehead{font-size:19px; font-weight:740; letter-spacing:.12em; text-transform:uppercase; margin-bottom:4px; color:#eaffff;
     text-shadow:0 0 18px rgba(89,227,255,.4);}
   .pagesub{color:var(--muted); font-size:12.5px; margin-bottom:18px;}
@@ -1077,8 +1095,13 @@ const DOCUMENT = String.raw `<!doctype html>
 <div class="wrap">
   <!-- NEURAL CORE — the living memory universe -->
   <section id="page-brain" hidden>
-    <div class="uniwrap">
+    <div class="uniwrap" id="brainviz">
       <canvas id="uni"></canvas>
+      <div class="first-run-card" id="first-run" role="status" aria-live="polite" hidden>
+        <p class="first-kicker">Start here</p>
+        <h2>Your memory will appear here</h2>
+        <p>Nothing is wrong. Peon has not saved a project memory yet.</p>
+      </div>
       <div class="uni-search"><input id="uq" placeholder="ask the memory field… (type to light up matching beliefs)" autocomplete="off"><span id="uq-hits" class="mono"></span><button class="btn ghost sm" id="uni-fit" title="reset view">⤢</button></div>
       <div class="uni-hud tl" id="uni-stats"></div>
       <div class="uni-hud tr" id="uni-health"></div>

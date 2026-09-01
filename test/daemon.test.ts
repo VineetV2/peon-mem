@@ -186,6 +186,8 @@ describe("Peon daemon", () => {
     expect(html).toContain('href="#/ops"');
     // The Brain home: global memory + live autonomous activity.
     expect(html).toContain("Neural Core");
+    expect(html).toContain("Your memory will appear here");
+    expect(html).toContain("No beliefs yet is normal");
     expect(html).toContain("Global memory");
     expect(html).toContain("what the brain is doing");
     // Project insights drill-down + editable memory.
