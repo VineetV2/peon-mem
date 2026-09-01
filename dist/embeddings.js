@@ -28,7 +28,10 @@ export function l2normalize(vector) {
     norm = Math.sqrt(norm);
     if (norm === 0)
         return vector.slice();
-    return vector.map((value) => value / norm);
+    const out = new Float32Array(vector.length);
+    for (let i = 0; i < vector.length; i += 1)
+        out[i] = vector[i] / norm;
+    return out;
 }
 /**
  * Deterministic local embedding: hashed character trigrams folded into a fixed
@@ -96,7 +99,8 @@ function b64decode(b64) {
         const buf = Buffer.from(b64, "base64");
         if (buf.byteLength === 0 || buf.byteLength % 4 !== 0)
             return null;
-        return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+        // slice() to own the bytes: a view onto buf.buffer would pin Node's shared Buffer pool.
+        return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
     }
     catch {
         return null;

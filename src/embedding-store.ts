@@ -164,11 +164,14 @@ export function encodeVector(vector: EmbeddingVector): string {
 }
 
 /** Decode a base64 float32 vector back to number[]; null on malformed/misaligned input. */
-export function decodeVector(b64: string): number[] | null {
+export function decodeVector(b64: string): Float32Array | null {
   try {
     const buf = Buffer.from(b64, "base64");
     if (buf.byteLength === 0 || buf.byteLength % 4 !== 0) return null;
-    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+    // Return the Float32Array itself rather than Array.from(...): a number[] stores every
+    // dimension as a double, doubling memory and copying 28k vectors on every cold load.
+    // slice() so the vector owns its bytes instead of pinning Node's shared Buffer pool.
+    return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   } catch {
     return null;
   }
@@ -182,7 +185,7 @@ function parseStoredLine(value: unknown): StoredEmbedding | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.id !== "string" || typeof record.model !== "string" || typeof record.hash !== "string") return null;
-  let vector: number[] | null = null;
+  let vector: EmbeddingVector | null = null;
   if (typeof record.vec === "string") {
     vector = decodeVector(record.vec);
   } else if (Array.isArray(record.vector) && record.vector.every((entry) => typeof entry === "number")) {

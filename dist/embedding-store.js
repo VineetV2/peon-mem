@@ -140,7 +140,10 @@ export function decodeVector(b64) {
         const buf = Buffer.from(b64, "base64");
         if (buf.byteLength === 0 || buf.byteLength % 4 !== 0)
             return null;
-        return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+        // Return the Float32Array itself rather than Array.from(...): a number[] stores every
+        // dimension as a double, doubling memory and copying 28k vectors on every cold load.
+        // slice() so the vector owns its bytes instead of pinning Node's shared Buffer pool.
+        return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
     }
     catch {
         return null;

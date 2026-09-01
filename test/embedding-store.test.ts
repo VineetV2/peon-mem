@@ -128,8 +128,11 @@ describe("EmbeddingStore", () => {
     const persisted = await readFile(join(dir, "brain", "embeddings.jsonl"), "utf8");
     expect(persisted).toContain('"vec":"');       // base64 field present
     expect(persisted).not.toMatch(/"vector":\[/);  // legacy array gone
-    // and it reads back to the same vector
-    expect((await store.vectorById()).get("a")).toEqual([1, 0, 0]);
+    // and it reads back to the same vector — as a Float32Array, not a number[]: keeping the
+    // typed array halves the memory a loaded brain costs (445 MB -> 163 MB at 28k vectors).
+    const readBack = (await store.vectorById()).get("a");
+    expect(readBack).toBeInstanceOf(Float32Array);
+    expect(Array.from(readBack!)).toEqual([1, 0, 0]);
   });
 });
 

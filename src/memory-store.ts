@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadPeonConfig, type PeonConfig } from "./config.js";
 import { EmbeddingStore } from "./embedding-store.js";
-import { cosineSimilarity, createEmbeddingClient, type EmbeddingClient } from "./embeddings.js";
+import { cosineSimilarity, createEmbeddingClient, type EmbeddingClient, type EmbeddingVector } from "./embeddings.js";
 import type { MemoryQualityReport } from "./quality.js";
 import { applyDelete, applyMerge, applyPin, applyUpdate, type MemoryPatch } from "./memory-mutations.js";
 import { runSleepCycle, type BrainAction, type Summarizer } from "./brain.js";
@@ -558,7 +558,7 @@ export class PeonMemoryStore {
    */
   async rankRecordsReadonly(
     query: string | undefined,
-    options: { limit?: number; queryVector?: number[] } = {}
+    options: { limit?: number; queryVector?: EmbeddingVector } = {}
   ): Promise<RankedMemoryRecord[]> {
     const records = await this.readMemoryRecords();
     let semantic: SemanticRetrievalInput | undefined;
@@ -717,7 +717,7 @@ export class PeonMemoryStore {
     threshold = 0.9
   ): Promise<{ records: MemoryRecord[]; merged: number }> {
     if (!this.embeddingClient || !this.embeddingStore) return { records, merged: 0 };
-    let vectorById: Map<string, number[]>;
+    let vectorById: Map<string, EmbeddingVector>;
     try {
       vectorById = (await this.embeddingStore.sync(records, this.embeddingClient)).vectorById;
     } catch {

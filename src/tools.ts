@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { loadPeonConfig } from "./config.js";
-import { createEmbeddingClient } from "./embeddings.js";
+import { createEmbeddingClient, type EmbeddingVector } from "./embeddings.js";
 import { PeonMemoryStore } from "./memory-store.js";
 import { PeonMemoryProcessor, type MaybeProcessMemoryResult, type ProcessMemoryResult } from "./processor.js";
 import { selectMemoryRecordsForContext, type RankedMemoryRecord } from "./retrieval.js";
@@ -549,7 +549,7 @@ export function createPeonTools(options: CreatePeonToolsOptions = {}): PeonTools
       const shortlist = candidates.slice(0, maxProjects);
 
       // Embed the query ONCE and reuse it across the shortlisted projects.
-      let queryVector: number[] | undefined;
+      let queryVector: EmbeddingVector | undefined;
       try {
         const client = createEmbeddingClient({ config: loadPeonConfig() });
         if (client) [queryVector] = await client.embed([input.query]);

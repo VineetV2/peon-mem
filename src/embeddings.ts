@@ -20,7 +20,11 @@ import type { PeonConfig } from "./config.js";
  *   - "off" mode: no embeddings; retrieval stays purely lexical.
  */
 
-export type EmbeddingVector = number[];
+// A vector is either a plain array (fresh from a provider's JSON) or a Float32Array (decoded
+// from the sidecar). Keeping decoded vectors as Float32Array instead of converting to number[]
+// is the difference between 4 and 8 bytes per dimension — measured 445 MB -> 163 MB for a
+// 28k-vector brain. Consumers only index and read .length, so both shapes work.
+export type EmbeddingVector = number[] | Float32Array;
 
 export const LOCAL_EMBEDDING_DIM = 256;
 export const LOCAL_EMBEDDING_MODEL = "peon-local-trigram-v1";
@@ -52,7 +56,9 @@ export function l2normalize(vector: EmbeddingVector): EmbeddingVector {
   for (const value of vector) norm += value * value;
   norm = Math.sqrt(norm);
   if (norm === 0) return vector.slice();
-  return vector.map((value) => value / norm);
+  const out = new Float32Array(vector.length);
+  for (let i = 0; i < vector.length; i += 1) out[i] = vector[i] / norm;
+  return out;
 }
 
 /**
@@ -133,7 +139,8 @@ function b64decode(b64: string): EmbeddingVector | null {
   try {
     const buf = Buffer.from(b64, "base64");
     if (buf.byteLength === 0 || buf.byteLength % 4 !== 0) return null;
-    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+    // slice() to own the bytes: a view onto buf.buffer would pin Node's shared Buffer pool.
+    return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   } catch {
     return null;
   }

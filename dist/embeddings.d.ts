@@ -15,7 +15,7 @@ import type { PeonConfig } from "./config.js";
  *
  *   - "off" mode: no embeddings; retrieval stays purely lexical.
  */
-export type EmbeddingVector = number[];
+export type EmbeddingVector = number[] | Float32Array;
 export declare const LOCAL_EMBEDDING_DIM = 256;
 export declare const LOCAL_EMBEDDING_MODEL = "peon-local-trigram-v1";
 export interface EmbeddingClient {

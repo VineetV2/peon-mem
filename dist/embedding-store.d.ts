@@ -40,4 +40,4 @@ export declare class EmbeddingStore {
 /** Serialize a vector as base64 of its float32 bytes — ~4x smaller + faster to parse than JSON float64. */
 export declare function encodeVector(vector: EmbeddingVector): string;
 /** Decode a base64 float32 vector back to number[]; null on malformed/misaligned input. */
-export declare function decodeVector(b64: string): number[] | null;
+export declare function decodeVector(b64: string): Float32Array | null;

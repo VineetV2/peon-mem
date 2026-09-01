@@ -1,5 +1,5 @@
 import { type PeonConfig } from "./config.js";
-import { type EmbeddingClient } from "./embeddings.js";
+import { type EmbeddingClient, type EmbeddingVector } from "./embeddings.js";
 import type { MemoryQualityReport } from "./quality.js";
 import { type MemoryPatch } from "./memory-mutations.js";
 import { type BrainAction, type Summarizer } from "./brain.js";
@@ -134,7 +134,7 @@ export declare class PeonMemoryStore {
      */
     rankRecordsReadonly(query: string | undefined, options?: {
         limit?: number;
-        queryVector?: number[];
+        queryVector?: EmbeddingVector;
     }): Promise<RankedMemoryRecord[]>;
     private buildSemanticInput;
     writeQualityReport(report: MemoryQualityReport): Promise<void>;
