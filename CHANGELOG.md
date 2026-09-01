@@ -2,6 +2,32 @@
 
 All notable changes to `peon-mem`. Dates are release dates.
 
+## 1.0.6
+
+### Performance — a loaded brain costs 40% less memory and loads 3.2x faster
+
+`decodeVector` ended in `Array.from(new Float32Array(...))`, converting a compact typed array
+into a JS `number[]` where every dimension is stored as a double. That doubled the bytes and
+copied every vector on each cold load. Decoded vectors now stay `Float32Array`.
+
+Measured on a real 27,232-vector brain, same `vectorById()` path:
+
+| | memory | load |
+|---|---|---|
+| before (`number[]`) | 648 MB | 941 ms |
+| after (`Float32Array`) | **389 MB** | **296 ms** |
+
+`EmbeddingVector` widens to `number[] | Float32Array` — providers still return plain arrays, the
+sidecar now yields typed ones, and consumers only index and read `.length`. The decode slices the
+buffer so each vector owns its bytes rather than pinning Node's shared Buffer pool.
+
+A single-slab-plus-subarray-views layout was also measured and **not** adopted: 171 MB against
+163 MB for plain per-vector typed arrays, because the preallocated slab wastes space on skipped
+rows and the views add their own overhead.
+
+Of the remaining 389 MB, roughly 163 MB is vectors; the rest is the 27k `StoredEmbedding` objects
+and the maps around them. That is where to look if this ever needs to go lower.
+
 ## 1.0.5
 
 ### Added
