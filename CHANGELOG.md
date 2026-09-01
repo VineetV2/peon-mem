@@ -2,6 +2,35 @@
 
 All notable changes to `peon-mem`. Dates are release dates.
 
+## 1.0.5
+
+### Added
+
+- **Cline is detected by the installer** ([#5](https://github.com/VineetV2/peon-mem/pull/5), thanks
+  [@adity982](https://github.com/adity982) — Peon's first external contribution). The wizard targets
+  Cline's VS Code extension settings first, platform-aware, and falls back to the `~/.cline` CLI
+  path. Twelve apps detected now.
+- **A star and feedback prompt at the two moments people are receptive**: the end of a successful
+  install, and a quiet link in the monitor header. Deliberately not in the daemon or the hooks —
+  those run constantly and any prompt there becomes noise.
+
+### Fixed
+
+- **The monitor no longer claims "No projects yet" while it is still loading.** The projects route
+  called its async loader without awaiting it, so the grid painted its empty state with no data.
+  On a large brain `/network` takes seconds, so a definite and wrong answer sat on screen for the
+  whole wait — and a silent `catch` left it there permanently if the request failed, with the
+  throttle blocking a retry. The three heavy endpoints now track load state, distinguish
+  "Reading project brains…" from "No projects yet", offer a retry on failure, treat a non-2xx as
+  an error rather than parsing an error body as data, and keep showing cached data when a refresh
+  fails instead of blanking.
+
+### Changed
+
+- The LongMemEval figure (61% vs 17%) is now labelled **self-measured** wherever it appears, and
+  points at `npm run eval`. It is one person's measurement of their own tool, and it was worded
+  like an established benchmark result. Raised by a maintainer reviewing Peon for integration.
+
 ## 1.0.4
 
 ### Added — readable search results in the monitor
