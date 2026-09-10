@@ -99,4 +99,25 @@ export interface CreateEmbeddingClientOptions {
     onFallback?: (error: unknown) => void;
 }
 /** Build the embedding client implied by config, or null when embeddings are off. */
+/**
+ * What was asked for versus what will actually run.
+ *
+ * Peon degrades to deterministic local trigram embeddings whenever the configured
+ * embedder is unavailable. That is deliberate — retrieval keeps working — but it was
+ * silent, and a silent downgrade is indistinguishable from working correctly while
+ * semantic recall quietly collapses. Two real incidents: an Ollama blip embedding 30k+
+ * records with trigram vectors, and a script whose .env was not found resolving to
+ * "local" with no warning at all.
+ */
+export interface EmbeddingPlan {
+    intended: PeonConfig["embeddingMode"];
+    effective: "off" | "local" | "api" | "ollama";
+    downgraded: boolean;
+    reason?: string;
+}
+/** Only the fields the decision actually depends on, matching the client factory. */
+export type EmbeddingPlanInput = Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "provider" | "llmApiKey">;
+export declare function resolveEmbeddingPlan(config: EmbeddingPlanInput): EmbeddingPlan;
+/** Test helper: forget which downgrade warnings have already been emitted. */
+export declare function resetEmbeddingWarnings(): void;
 export declare function createEmbeddingClient(options: CreateEmbeddingClientOptions): EmbeddingClient | null;
