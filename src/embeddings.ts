@@ -368,9 +368,91 @@ export interface CreateEmbeddingClientOptions {
 }
 
 /** Build the embedding client implied by config, or null when embeddings are off. */
+
+/**
+ * What was asked for versus what will actually run.
+ *
+ * Peon degrades to deterministic local trigram embeddings whenever the configured
+ * embedder is unavailable. That is deliberate — retrieval keeps working — but it was
+ * silent, and a silent downgrade is indistinguishable from working correctly while
+ * semantic recall quietly collapses. Two real incidents: an Ollama blip embedding 30k+
+ * records with trigram vectors, and a script whose .env was not found resolving to
+ * "local" with no warning at all.
+ */
+export interface EmbeddingPlan {
+  intended: PeonConfig["embeddingMode"];
+  effective: "off" | "local" | "api" | "ollama";
+  downgraded: boolean;
+  reason?: string;
+}
+
+/** Only the fields the decision actually depends on, matching the client factory. */
+export type EmbeddingPlanInput = Pick<
+  PeonConfig,
+  "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "provider" | "llmApiKey"
+>;
+
+export function resolveEmbeddingPlan(config: EmbeddingPlanInput): EmbeddingPlan {
+  const intended = config.embeddingMode;
+  if (intended === "off") return { intended, effective: "off", downgraded: false };
+  if (intended === "local") return { intended, effective: "local", downgraded: false };
+  if (intended === "ollama") {
+    // Reachability cannot be known at construction time; a dead server surfaces at
+    // the first embed() as a degraded run, which the store refuses to persist.
+    return { intended, effective: "ollama", downgraded: false };
+  }
+
+  const apiKey = config.llmApiKey ?? config.openRouterApiKey;
+  if (!apiKey) {
+    return { intended, effective: "local", downgraded: true, reason: "no API key/credentials configured" };
+  }
+  if (!config.embeddingModel) {
+    return { intended, effective: "local", downgraded: true, reason: "PEON_EMBEDDING_MODEL is not set" };
+  }
+  if (config.provider === "anthropic") {
+    return { intended, effective: "local", downgraded: true, reason: "Anthropic has no embeddings API" };
+  }
+  return { intended, effective: "api", downgraded: false };
+}
+
+/** Warn once per distinct reason, so a long-lived daemon does not spam its log. */
+const warnedDowngrades = new Set<string>();
+
+function warnOnce(plan: EmbeddingPlan): void {
+  if (!plan.downgraded || !plan.reason) return;
+  if (warnedDowngrades.has(plan.reason)) return;
+  warnedDowngrades.add(plan.reason);
+  console.warn(
+    `[peon] embedding mode "${plan.intended}" is not available (${plan.reason}); ` +
+      `falling back to local trigram embeddings. Semantic recall will be much weaker — ` +
+      `set PEON_EMBEDDING_MODE=local to silence this, or fix the configuration.`
+  );
+}
+
+/** Test helper: forget which downgrade warnings have already been emitted. */
+export function resetEmbeddingWarnings(): void {
+  warnedDowngrades.clear();
+}
+
 export function createEmbeddingClient(options: CreateEmbeddingClientOptions): EmbeddingClient | null {
   const { config } = options;
+  warnOnce(resolveEmbeddingPlan(config));
   if (config.embeddingMode === "off") return null;
+
+  // No caller ever supplied onFallback, so a runtime degrade (embedding server down)
+  // was completely silent. Default to warning once per process: the vectors from that
+  // run are trigram, not semantic, and the operator needs to know retrieval got worse.
+  const onFallback =
+    options.onFallback ??
+    ((error: unknown) => {
+      if (warnedDowngrades.has("runtime-fallback")) return;
+      warnedDowngrades.add("runtime-fallback");
+      console.warn(
+        `[peon] embedding request failed (${error instanceof Error ? error.message : String(error)}); ` +
+          `falling back to local trigram embeddings for this run. Semantic recall is degraded ` +
+          `until the embedding server is reachable again.`
+      );
+    });
 
   if (config.embeddingMode === "ollama") {
     // Local semantic embeddings. Fall back to the API client (if configured) then trigram-local,
@@ -384,10 +466,10 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions): Em
         ? new FallbackEmbeddingClient(
             new OpenRouterEmbeddingClient({ apiKey: config.openRouterApiKey, model: config.embeddingModel }),
             new LocalEmbeddingClient(),
-            options.onFallback
+            onFallback
           )
         : new LocalEmbeddingClient();
-    return new FallbackEmbeddingClient(ollama, fallback, options.onFallback);
+    return new FallbackEmbeddingClient(ollama, fallback, onFallback);
   }
 
   const apiKey = config.llmApiKey ?? config.openRouterApiKey;
@@ -398,7 +480,7 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions): Em
       model: config.embeddingModel,
       baseUrl: config.llmBaseUrl
     });
-    return new FallbackEmbeddingClient(primary, new LocalEmbeddingClient(), options.onFallback);
+    return new FallbackEmbeddingClient(primary, new LocalEmbeddingClient(), onFallback);
   }
 
   // Default and "api"-without-credentials both resolve to deterministic local embeddings.
