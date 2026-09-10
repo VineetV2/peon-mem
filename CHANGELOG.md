@@ -22,6 +22,19 @@
   Affects any setup where the embedding server can become briefly unreachable: Ollama,
   LM Studio, or a hosted endpoint mid-outage.
 
+- **Embedding downgrades are now loud.** Peon falls back to deterministic local
+  trigram embeddings when the configured embedder is unavailable — correct, but it
+  was silent, which is indistinguishable from working while semantic recall
+  collapses. `resolveEmbeddingPlan()` reports intended vs effective mode and why they
+  differ, and `createEmbeddingClient()` warns once per reason. `onFallback` existed
+  but no caller ever passed it, so runtime degrades were invisible too; there is now
+  a default that warns once per process.
+
+- **All dependency advisories resolved** (1 high, 4 moderate). Three were in the
+  production tree via `@modelcontextprotocol/sdk` — `fast-uri` (high), `hono`, `qs` —
+  so they reached everyone installing peon-mem. Lockfile-only; `package.json`
+  unchanged.
+
 
 All notable changes to `peon-mem`. Dates are release dates.
 
