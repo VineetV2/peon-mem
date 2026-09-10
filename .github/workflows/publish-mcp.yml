@@ -6,15 +6,36 @@ on:
 permissions:
   id-token: write
   contents: read
+
+# A release fires this once; a manual dispatch for the same version fires it again.
+# Without a guard the two race and the loser reports a spurious failure.
+concurrency:
+  group: mcp-publish-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install mcp-publisher
         run: |
           curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
       - name: Login (GitHub OIDC)
         run: ./mcp-publisher login github-oidc
       - name: Publish
-        run: ./mcp-publisher publish
+        run: |
+          # The MCP registry rejects a version it already has with a 400. That is not a
+          # failure — it means this version is already published (a re-run, or a manual
+          # dispatch after the release event already succeeded). Treat it as success and
+          # let every other error still fail the job.
+          set +e
+          output=$(./mcp-publisher publish 2>&1)
+          status=$?
+          echo "$output"
+          if [ $status -ne 0 ]; then
+            if echo "$output" | grep -q "cannot publish duplicate version"; then
+              echo "::notice::Version already present in the MCP registry — nothing to publish."
+              exit 0
+            fi
+            exit $status
+          fi
