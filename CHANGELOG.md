@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.7
+
+### Fixed
+
+- **Degraded embedding fallbacks no longer poison the vector sidecar.**
+  `FallbackEmbeddingClient` reported the *primary* model's name even after falling
+  back to local trigram vectors, so a brief embedding-server blip persisted 256-dim
+  vectors under (for example) `qwen3-embedding:0.6b`. Every later sync saw a matching
+  model + hash and "reused" them forever. Nothing errored — but `cosineSimilarity`
+  returns 0 on a length mismatch, so those beliefs silently disappeared from semantic
+  recall. Observed on a real brain after an Ollama restart: 30,834 of 31,966 vectors
+  affected.
+
+  `sync()` now refuses to persist vectors from a degraded run (they are still returned,
+  so retrieval degrades gracefully for that call), and treats vector width as part of
+  validity — so sidecars poisoned before this release repair themselves on the next
+  sync. The client's real width is cached per model and probed only when nothing else
+  needs recomputing, so there is no extra round trip in the common path.
+
+  Affects any setup where the embedding server can become briefly unreachable: Ollama,
+  LM Studio, or a hosted endpoint mid-outage.
+
+
 All notable changes to `peon-mem`. Dates are release dates.
 
 ## 1.0.6
