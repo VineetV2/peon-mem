@@ -1,6 +1,12 @@
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { contentHash } from "./embeddings.js";
+/** Real output width per embedding model, learned once per process. */
+const modelDimensions = new Map();
+/** Test helper: forget learned widths, simulating a fresh daemon process. */
+export function resetEmbeddingDimensionCache() {
+    modelDimensions.clear();
+}
 export class EmbeddingStore {
     filePath;
     // mtime-keyed cache so the (multi-MB) sidecar isn't re-read+parsed on every prompt's
@@ -56,11 +62,36 @@ export class EmbeddingStore {
         const existing = await this.load();
         const liveIds = new Set(records.map((record) => record.id));
         const pruned = [...existing.keys()].filter((id) => !liveIds.has(id)).length;
+        // A stored vector can carry the right model name and hash yet the wrong width —
+        // that is what a degraded fallback wrote — and cosineSimilarity returns 0 on a
+        // length mismatch, so those records vanish from semantic recall without erroring.
+        // Width is part of validity. Learning it must not cost a round trip per sync, so
+        // it is cached per model and only probed when nothing else needs recomputing:
+        // precisely the case where a fully-poisoned sidecar looks entirely reusable.
+        const matchesStored = (record) => {
+            const prior = existing.get(record.id);
+            return prior && prior.model === client.model && prior.hash === contentHash(embeddingText(record))
+                ? prior
+                : undefined;
+        };
+        let expectedDim = modelDimensions.get(client.model) ?? 0;
+        if (expectedDim === 0 && records.length > 0 && records.every((record) => matchesStored(record))) {
+            try {
+                const probe = await client.embed([embeddingText(records[0])]);
+                if (!client.degraded && probe[0]?.length) {
+                    expectedDim = probe[0].length;
+                    modelDimensions.set(client.model, expectedDim);
+                }
+            }
+            catch {
+                expectedDim = 0; // cannot probe — fall back to model+hash validity only
+            }
+        }
+        const valid = (prior) => Boolean(prior) && (expectedDim === 0 || prior.vector.length === expectedDim);
         const toCompute = [];
         let reused = 0;
         for (const record of records) {
-            const prior = existing.get(record.id);
-            if (prior && prior.model === client.model && prior.hash === contentHash(embeddingText(record))) {
+            if (valid(matchesStored(record))) {
                 reused += 1;
             }
             else {
@@ -69,15 +100,28 @@ export class EmbeddingStore {
         }
         const result = new Map();
         for (const record of records) {
-            const prior = existing.get(record.id);
-            if (prior && prior.model === client.model && prior.hash === contentHash(embeddingText(record))) {
+            const prior = matchesStored(record);
+            if (valid(prior))
                 result.set(record.id, prior);
-            }
         }
         let computed = 0;
         if (toCompute.length > 0) {
             try {
                 const vectors = await client.embed(toCompute.map((record) => embeddingText(record)));
+                // A degraded run returns local trigram vectors. Serving them for THIS call is
+                // graceful degradation; writing them under the primary model's name is not —
+                // they would be reused forever as if they were real embeddings.
+                if (client.degraded) {
+                    const degradedById = new Map();
+                    for (const [id, stored] of result)
+                        degradedById.set(id, stored.vector);
+                    toCompute.forEach((record, i) => {
+                        const vector = vectors[i];
+                        if (vector)
+                            degradedById.set(record.id, vector);
+                    });
+                    return { vectorById: degradedById, computed: 0, reused, pruned };
+                }
                 toCompute.forEach((record, i) => {
                     result.set(record.id, {
                         id: record.id,
@@ -87,6 +131,9 @@ export class EmbeddingStore {
                     });
                 });
                 computed = toCompute.length;
+                const width = vectors[0]?.length ?? 0;
+                if (width > 0)
+                    modelDimensions.set(client.model, width);
             }
             catch {
                 // On a hard failure, keep whatever we already had and continue lexical-only.

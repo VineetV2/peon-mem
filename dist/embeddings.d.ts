@@ -81,6 +81,15 @@ export declare class FallbackEmbeddingClient implements EmbeddingClient {
     private readonly fallback;
     private readonly onFallback?;
     readonly model: string;
+    /**
+     * True when the most recent embed() degraded to the fallback. The vectors it
+     * returns are a different model AND a different width, so persisting them under
+     * the primary's name makes them indistinguishable from real ones — every later
+     * sync then "reuses" trigram vectors as if they were embeddings, and retrieval
+     * silently scores them 0 (cosineSimilarity returns 0 on a length mismatch).
+     * Callers that persist vectors must check this and skip writing.
+     */
+    degraded: boolean;
     constructor(primary: EmbeddingClient, fallback?: EmbeddingClient, onFallback?: ((error: unknown) => void) | undefined);
     embed(texts: string[]): Promise<EmbeddingVector[]>;
 }
