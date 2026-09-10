@@ -20,6 +20,8 @@ export interface SyncResult {
     reused: number;
     pruned: number;
 }
+/** Test helper: forget learned widths, simulating a fresh daemon process. */
+export declare function resetEmbeddingDimensionCache(): void;
 export declare class EmbeddingStore {
     private readonly filePath;
     private cache?;

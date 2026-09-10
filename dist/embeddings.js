@@ -290,6 +290,15 @@ export class FallbackEmbeddingClient {
     fallback;
     onFallback;
     model;
+    /**
+     * True when the most recent embed() degraded to the fallback. The vectors it
+     * returns are a different model AND a different width, so persisting them under
+     * the primary's name makes them indistinguishable from real ones — every later
+     * sync then "reuses" trigram vectors as if they were embeddings, and retrieval
+     * silently scores them 0 (cosineSimilarity returns 0 on a length mismatch).
+     * Callers that persist vectors must check this and skip writing.
+     */
+    degraded = false;
     constructor(primary, fallback = new LocalEmbeddingClient(), onFallback) {
         this.primary = primary;
         this.fallback = fallback;
@@ -298,10 +307,13 @@ export class FallbackEmbeddingClient {
     }
     async embed(texts) {
         try {
-            return await this.primary.embed(texts);
+            const vectors = await this.primary.embed(texts);
+            this.degraded = false;
+            return vectors;
         }
         catch (error) {
             this.onFallback?.(error);
+            this.degraded = true;
             return this.fallback.embed(texts);
         }
     }
