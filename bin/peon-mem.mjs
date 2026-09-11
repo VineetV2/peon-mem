@@ -25,12 +25,16 @@ const DAEMON = join(PKG, "dist", "daemon-cli.js");
 const MCP = join(PKG, "dist", "index.js");
 const NODE = process.execPath;
 
-const cmd = process.argv[2] || "help";
+// An MCP client launches `npx -y peon-mem` with no arguments and stdin as a pipe; that is
+// exactly what the MCP registry entry and marketplaces install. Serve MCP then. A person at a
+// terminal (stdin is a TTY) still gets the help text.
+const cmd = process.argv[2] || (process.stdin.isTTY ? "help" : "mcp");
 const DRY = process.argv.includes("--dry-run");
 const YES = process.argv.includes("--yes") || !process.stdout.isTTY;
 const log = (s) => console.log(s);
 const act = (desc, fn) => { log((DRY ? "  [dry-run] " : "  ✔ ") + desc); if (!DRY) fn(); };
-const rl = YES ? null : createInterface({ input: process.stdin, output: process.stdout });
+// In MCP mode stdin/stdout carry JSON-RPC, so nothing else may read stdin or write stdout.
+const rl = YES || cmd === "mcp" ? null : createInterface({ input: process.stdin, output: process.stdout });
 async function ask(q, def) {
   if (!rl) return def;
   const a = (await rl.question(`${q}${def ? ` [${def}]` : ""}: `)).trim();
@@ -306,6 +310,8 @@ if (cmd === "install") {
   log("Remove [mcp_servers.peon] / mcpServers.peon from Codex/Gemini/Cursor/Cline configs if you added them.");
   log("Memory data untouched: <project>/.peon/ and " + DEFAULT_HOME);
   rl?.close();
+} else if (cmd === "mcp") {
+  await import(MCP);
 } else if (cmd === "daemon") {
   await import(DAEMON);
 } else if (cmd === "doctor") {
@@ -319,6 +325,7 @@ if (cmd === "install") {
   log("peon-mem — memory brain for AI coding agents");
   log("  peon-mem install [--yes] [--dry-run]   guided setup (memory home → LLM → daemon → apps)");
   log("  peon-mem uninstall                     remove service + hooks (data stays)");
+  log("  peon-mem mcp                           run the MCP server over stdio (what MCP clients launch)");
   log("  peon-mem daemon                        run daemon in foreground");
   log("  peon-mem doctor                        health check");
   rl?.close();
