@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added — consolidation phase tracing
+
+- A consolidation that stalls now says where. Any phase over 10 s is logged to the
+  daemon's error log (`[peon] consolidation <project>: "<phase>" took N s`), and a run
+  still in one phase gets a line every 2 minutes (`still in "<phase>" after N s`).
+
 ### Fixed — one queue for every background model call
 
 - Consolidation, entity extraction, global extraction, brain compression and recuration

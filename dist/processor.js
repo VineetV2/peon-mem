@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { PeonMemoryStore, defaultMaxDeltaChars } from "./memory-store.js";
 import { resetModelSlots, withModelSlot } from "./model-slots.js";
 import { llmEnabled, loadPeonConfig } from "./config.js";
@@ -26,6 +26,42 @@ function grownDeltaCap(current) {
         return undefined;
     const next = Math.floor(current * 1.25);
     return next >= defaultMaxDeltaChars() ? undefined : next;
+}
+// ── Phase tracing ─────────────────────────────────────────────────────────────────────
+// A consolidation that stalled gave no clue where. Log any phase that takes over 10 s, and
+// every 2 minutes name the phase a run is still in, so a hang points at its own step.
+let slowPhaseMs = 10_000;
+let stillRunningEveryMs = 120_000;
+/** Test hook: shorten the tracing thresholds. */
+export function setPhaseTraceTimings(slowMs, everyMs) {
+    slowPhaseMs = slowMs;
+    stillRunningEveryMs = everyMs;
+}
+class PhaseTrace {
+    project;
+    phase = "starting";
+    since = Date.now();
+    timer;
+    constructor(project) {
+        this.project = project;
+        this.timer = setInterval(() => {
+            const seconds = Math.round((Date.now() - this.since) / 1000);
+            console.warn(`[peon] consolidation ${this.project}: still in "${this.phase}" after ${seconds} s`);
+        }, stillRunningEveryMs);
+        this.timer.unref?.();
+    }
+    enter(next) {
+        const took = Date.now() - this.since;
+        if (took > slowPhaseMs) {
+            console.warn(`[peon] consolidation ${this.project}: "${this.phase}" took ${Math.round(took / 1000)} s`);
+        }
+        this.phase = next;
+        this.since = Date.now();
+    }
+    done() {
+        this.enter("done");
+        clearInterval(this.timer);
+    }
 }
 // ── Consolidation scheduling ─────────────────────────────────────────────────────────
 // One consolidation per project at a time. Model requests themselves go through the shared
@@ -76,6 +112,16 @@ export class PeonMemoryProcessor {
         }
     }
     async consolidate(input) {
+        const trace = new PhaseTrace(basename(resolve(input.projectPath)));
+        try {
+            return await this.consolidateTraced(input, trace);
+        }
+        finally {
+            trace.done();
+        }
+    }
+    async consolidateTraced(input, trace) {
+        trace.enter("opening the store and reading the delta");
         const store = await PeonMemoryStore.open({
             projectPath: input.projectPath,
             memoryDirName: this.config.memoryDirName
@@ -84,9 +130,11 @@ export class PeonMemoryProcessor {
         // Consolidate only NEW experience (the delta), aware of EXISTING beliefs.
         const deltaCap = priorState.adaptiveMaxDeltaChars; // undefined = the configured size
         const { text: deltaMemory, lastEventId, capped } = await store.readRawMemoryDelta(priorState.lastProcessedEventId, deltaCap);
+        trace.enter("reading existing memory");
         const existingMemory = formatExistingMemory(await store.listMemoryRecords());
         const fullRawChars = (await store.readRawMemory(Number.MAX_SAFE_INTEGER)).length;
         const reason = input.reason ?? "manual";
+        trace.enter("model call (waiting for a slot, then generating)");
         const modelResult = input.aiResult
             ? {
                 content: JSON.stringify(input.aiResult),
@@ -111,11 +159,14 @@ export class PeonMemoryProcessor {
             ...processed.decisions, ...processed.preferences, ...processed.openQuestions,
             ...processed.artifacts, ...processed.timeline, ...(processed.memories ?? []).map((m) => m.content)
         ].filter((c) => typeof c === "string" && c.trim().length > 0);
+        trace.enter("entity extraction");
         const modelEntities = await extractDomainEntitiesViaModel([...new Set(beliefContents)].map((c) => ({ key: c.trim(), content: c })), { config: this.config });
         // Whole apply→merge→persist runs as ONE serialized transaction so an overlapping
         // consolidation (turn-end vs session-end vs heartbeat) can't lost-update the brain.
         // The LLM calls above are intentionally OUTSIDE the lock — only the write section serializes.
+        trace.enter("waiting for the project write lock");
         const { applyStats, merged } = await store.runExclusive(async () => {
+            trace.enter("applying (apply, quality report, merge, persist)");
             const applyStats = await store.applyProcessedMemory(processed, { reason }, modelEntities);
             const quality = createQualityReport(await store.listMemoryRecords());
             // Collapse near-duplicate active beliefs (e.g. a supersede replacement and a
@@ -133,6 +184,7 @@ export class PeonMemoryProcessor {
             recordsAdded: applyStats.added,
             merged
         };
+        trace.enter("writing processing state");
         await store.writeProcessingState({
             ...(await store.readProcessingState()),
             lastStatus: "processed",
