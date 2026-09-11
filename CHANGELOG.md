@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed — requests to a local model server use a fresh connection
+
+- Measured over Tailscale to the M1: six 64-text embedding batches on one keep-alive
+  connection, 2 stuck with their ~310 KB reply sitting undelivered in the server's send
+  queue; the same six on a fresh connection each, 6/6 in 2.8 s. Every request to an
+  `ollama` provider (embeddings, consolidation, extraction, compression, recuration) now
+  sends `Connection: close`: about 90 ms of handshake against seconds of model work. Hosted
+  providers keep keep-alive. The per-request deadline and retry from the previous fix stay
+  as a backstop.
+
 ### Fixed — a wedged connection no longer stalls consolidation for 5 minutes
 
 - Measured live: Ollama answered a 64-text embedding batch in seconds, but its ~310 KB

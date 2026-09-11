@@ -1,7 +1,7 @@
 import { basename, resolve } from "node:path";
 import { PeonMemoryStore, defaultMaxDeltaChars } from "./memory-store.js";
 import { resetModelSlots, withModelSlot } from "./model-slots.js";
-import { llmEnabled, loadPeonConfig, type PeonConfig } from "./config.js";
+import { llmEnabled, loadPeonConfig, localConnectionHeaders, type PeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
 import { extractDomainEntitiesViaModel } from "./entity-extraction.js";
 import type { ConsolidationOperation, MemoryRecord, MemoryRecordInput, MemoryStatus, MemoryType, ProcessedMemory } from "./types.js";
@@ -469,7 +469,8 @@ export class OpenRouterMemoryModelClient implements MemoryModelClient {
       method: "POST",
       headers: {
         Authorization: `Bearer ${input.config.llmApiKey ?? ""}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...localConnectionHeaders(input.config)
       },
       body: JSON.stringify({
         model: input.config.processingModel,

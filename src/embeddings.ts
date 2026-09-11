@@ -334,9 +334,10 @@ export class OllamaEmbeddingClient implements EmbeddingClient {
   private async fetchEmbeddings(input: string[]): Promise<{ embeddings?: number[][] }> {
     const url = `${this.baseUrl}/api/embed`;
     const body = JSON.stringify({ model: this.model, input });
-    const attempt = async (fresh: boolean) => {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (fresh) headers.connection = "close";
+    const attempt = async () => {
+      // Always a fresh connection: large replies wedge on reused keep-alive connections to a
+      // local server over Tailscale (see localConnectionHeaders in config.ts).
+      const headers: Record<string, string> = { "Content-Type": "application/json", connection: "close" };
       const response = await this.fetchImpl(url, { method: "POST", headers, body, signal: AbortSignal.timeout(this.requestTimeoutMs) });
       if (!response.ok) {
         const text = (await response.text?.().catch(() => "")) ?? "";
@@ -346,11 +347,11 @@ export class OllamaEmbeddingClient implements EmbeddingClient {
       return (await response.json()) as { embeddings?: number[][] };
     };
     try {
-      return await attempt(false);
+      return await attempt();
     } catch (first) {
       if (first instanceof EmbeddingHttpError) throw first;
       try {
-        return await attempt(true);
+        return await attempt();
       } catch (second) {
         if (second instanceof EmbeddingHttpError) throw second;
         const timedOut = [first, second].every((e) => e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"));
