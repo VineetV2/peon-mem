@@ -31,6 +31,20 @@
 - Consolidation requests `response_format: json_object`. Local 7B models otherwise
   reply conversationally and every consolidation is lost to a parse error.
 
+### Fixed — a too-small model context window no longer eats sessions silently
+
+- Ollama's default context is 4,096 tokens. A consolidation prompt is ~18k, and
+  Ollama does not error on overflow: it keeps the tail and drops the head, which is
+  the system prompt and the JSON schema. The model then returned `{}`, Peon applied
+  nothing, and still advanced the cursor, so the session was marked consolidated
+  with no memories extracted.
+- Consolidation now compares the server's reported `usage.prompt_tokens` with its
+  own estimate and refuses a result when under half the prompt was read. The cursor
+  is not moved, so the session is retried once the window is fixed, and the error
+  says how: a model with `PARAMETER num_ctx 32768`, or `OLLAMA_CONTEXT_LENGTH`.
+  Verified against Ollama: `qwen2.5:7b` (4k) reported 4,096 of ~18,384 tokens and was
+  refused; the same input on a 32k-context build was accepted.
+
 ## 1.0.7
 
 ### Fixed

@@ -88,3 +88,16 @@ export declare class OpenRouterMemoryModelClient implements MemoryModelClient {
     }): Promise<MemoryModelResult>;
 }
 export declare function parseProcessedMemory(content: string): ProcessedMemory;
+/**
+ * Did the model server silently truncate the prompt?
+ *
+ * OpenAI-compatible servers report usage.prompt_tokens: what the model actually read.
+ * Ollama, at its 4096-token default, reports exactly 4096 for a ~17K-token prompt.
+ *
+ * The threshold has to respect how rough the estimate is. chars/4 OVER-estimates
+ * English (real text runs ~5.5 chars/token), so an untruncated prompt still reports
+ * only ~0.73 of the estimate. A truncated one reports ~0.24. Below 0.5 is unambiguous:
+ * reaching it without truncation would take 8+ chars per token. Small prompts are
+ * ignored, where estimation noise is a large share of the total.
+ */
+export declare function detectPromptTruncation(estimatedPromptTokens: number, reportedPromptTokens: number | undefined): boolean;
