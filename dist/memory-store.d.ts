@@ -46,6 +46,7 @@ export declare class PeonMemoryStore {
     private readonly projectPath;
     private readonly memoryDir;
     private readonly embeddingClient;
+    private readonly queryEmbedTimeoutMs;
     private readonly sessions;
     private embeddingStore?;
     private constructor();
@@ -196,3 +197,5 @@ export declare class PeonMemoryStore {
  * (e.g. in tests) without first reading the record back.
  */
 export declare function memoryRecordId(type: MemoryType, content: string): string;
+/** The configured consolidation chunk size (PEON_CONSOLIDATION_MAX_DELTA_CHARS, default 60k chars). */
+export declare function defaultMaxDeltaChars(): number;

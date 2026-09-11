@@ -86,6 +86,8 @@ export interface ProcessingState {
     lastEstimatedTokens?: number;
     lastSkippedAt?: string;
     lastSkipReason?: string;
+    /** Consolidation chunk size after a timeout or truncation shrank it (grows back on success). */
+    adaptiveMaxDeltaChars?: number;
     /** Observability: what the most recent consolidation actually did. */
     lastOperationsEmitted?: number;
     lastSuperseded?: number;

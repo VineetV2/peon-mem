@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { loadPeonConfig } from "./config.js";
-import { createEmbeddingClient, type EmbeddingVector } from "./embeddings.js";
+import { createEmbeddingClient, type EmbeddingVector, embedQueryWithin, DEFAULT_QUERY_EMBED_TIMEOUT_MS } from "./embeddings.js";
 import { PeonMemoryStore } from "./memory-store.js";
 import { PeonMemoryProcessor, type MaybeProcessMemoryResult, type ProcessMemoryResult } from "./processor.js";
 import { selectMemoryRecordsForContext, type RankedMemoryRecord } from "./retrieval.js";
@@ -605,8 +605,11 @@ export function createPeonTools(options: CreatePeonToolsOptions = {}): PeonTools
       // Embed the query ONCE and reuse it across the shortlisted projects.
       let queryVector: EmbeddingVector | undefined;
       try {
-        const client = createEmbeddingClient({ config: loadPeonConfig() });
-        if (client) [queryVector] = await client.embed([input.query]);
+        const config = loadPeonConfig();
+        const client = createEmbeddingClient({ config });
+        if (client) {
+          queryVector = await embedQueryWithin(client, input.query, config.queryEmbedTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS);
+        }
       } catch {
         // lexical-only if embeddings are unavailable
       }

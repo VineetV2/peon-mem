@@ -67,7 +67,8 @@ export function loadPeonConfig(env = process.env) {
         llmTimeoutMs: numberFromEnv(mergedEnv.PEON_LLM_TIMEOUT_MS, 600_000),
         consolidationConcurrency: optional(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY)
             ? numberFromEnv(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY, 1)
-            : undefined
+            : undefined,
+        queryEmbedTimeoutMs: numberFromEnv(mergedEnv.PEON_QUERY_EMBED_TIMEOUT_MS, 2_000)
     };
 }
 export function readEnvFile(startDir = process.cwd()) {

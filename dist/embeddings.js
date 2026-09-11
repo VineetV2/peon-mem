@@ -3,6 +3,29 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 export const LOCAL_EMBEDDING_DIM = 256;
 export const LOCAL_EMBEDDING_MODEL = "peon-local-trigram-v1";
+export const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 2_000;
+/**
+ * Embed a prompt's query, but never make the prompt wait longer than `timeoutMs`.
+ *
+ * Every prompt embeds its query before ranking. With the embedder on a small home server
+ * that is busy generating a consolidation, that took 26-40 s, and the prompt waited the
+ * whole time. Past the deadline, or on any failure, this returns undefined and retrieval
+ * ranks lexically. A request that misses the deadline keeps running, so a query-embedding
+ * cache still fills and the same query is instant next time.
+ */
+export async function embedQueryWithin(client, query, timeoutMs) {
+    const request = client.embed([query]).then(([vector]) => (vector && vector.length > 0 ? vector : undefined), () => undefined);
+    let timer;
+    const deadline = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+    });
+    try {
+        return await Promise.race([request, deadline]);
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
 /** Cosine similarity of two vectors. Returns 0 for empty/mismatched/zero vectors. */
 export function cosineSimilarity(a, b) {
     if (a.length === 0 || a.length !== b.length)

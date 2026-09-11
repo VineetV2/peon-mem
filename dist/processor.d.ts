@@ -62,6 +62,14 @@ export interface PeonMemoryProcessorOptions {
     config?: PeonConfig;
     modelClient?: MemoryModelClient;
 }
+/** The model server took too long for this request. A smaller chunk may fit. */
+export declare class ModelTimeoutError extends Error {
+    name: string;
+}
+/** The model server's context window cut the prompt. A smaller chunk may fit. */
+export declare class PromptTruncatedError extends Error {
+    name: string;
+}
 /** Test hook: forget in-flight runs and the slot pool. */
 export declare function resetConsolidationScheduling(): void;
 export declare class PeonMemoryProcessor {
