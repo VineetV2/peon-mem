@@ -243,9 +243,34 @@ export function openStoreCacheStats(): { openStores: number } {
   return { openStores: openStoreCount };
 }
 
+/**
+ * PEON_DAEMON_URL as an http(s) base URL, or undefined to run the tools in-process.
+ *
+ * The variable is optional, and registry listings render it with a placeholder value
+ * ("your-peon-daemon-url-here"). A copied placeholder must not turn a working in-process
+ * server into one where every call fails, so anything that is not an http(s) URL is
+ * dropped with a warning on stderr (stdout carries the MCP protocol).
+ */
+export function resolveDaemonUrl(
+  raw: string | undefined,
+  warn: (message: string) => void = (message) => console.warn(message)
+): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  try {
+    const { protocol } = new URL(value);
+    if (protocol === "http:" || protocol === "https:") return value;
+  } catch {
+    // not a URL at all: fall through to the warning
+  }
+  warn(`[peon] ignoring PEON_DAEMON_URL=${JSON.stringify(value)}: not an http(s) URL. Running the tools in-process instead.`);
+  return undefined;
+}
+
 export function createPeonTools(options: CreatePeonToolsOptions = {}): PeonTools {
-  if (options.daemonUrl) {
-    return createDaemonBackedTools(options.daemonUrl);
+  const daemonUrl = resolveDaemonUrl(options.daemonUrl);
+  if (daemonUrl) {
+    return createDaemonBackedTools(daemonUrl);
   }
 
   const storesByProject = new Map<string, PeonMemoryStore>();
@@ -650,7 +675,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       url.searchParams.set("projectPath", input.projectPath);
       if (input.query) url.searchParams.set("query", input.query);
       if (input.maxChars) url.searchParams.set("maxChars", String(input.maxChars));
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<ProjectContext>(response);
     },
 
@@ -659,7 +684,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       url.searchParams.set("projectPath", input.projectPath);
       if (input.query) url.searchParams.set("query", input.query);
       if (input.maxChars) url.searchParams.set("maxChars", String(input.maxChars));
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<BrainInspection>(response);
     },
 
@@ -669,7 +694,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       url.searchParams.set("query", input.query);
       if (input.limit) url.searchParams.set("limit", String(input.limit));
       if (input.maxChars) url.searchParams.set("maxChars", String(input.maxChars));
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<SearchMemoryToolResult>(response);
     },
 
@@ -677,7 +702,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       const url = new URL(`${baseUrl}/quality`);
       url.searchParams.set("projectPath", input.projectPath);
       if (input.staleAfterDays) url.searchParams.set("staleAfterDays", String(input.staleAfterDays));
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<MemoryQualityReport>(response);
     },
 
@@ -690,7 +715,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       if (input.query) url.searchParams.set("query", input.query);
       if (input.type) url.searchParams.set("type", input.type);
       if (input.status) url.searchParams.set("status", input.status);
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<MemoryRecord[]>(response);
     },
 
@@ -721,18 +746,18 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
     async brainActivity(input: { projectPaths: string[]; limit?: number }): Promise<BrainActivityItem[]> {
       const url = new URL(`${baseUrl}/brain/activity`);
       if (input.limit) url.searchParams.set("limit", String(input.limit));
-      return readJsonResponse(await fetch(url));
+      return readJsonResponse(await daemonFetch(url));
     },
 
     async globalDashboard(): Promise<GlobalDashboard> {
-      return readJsonResponse(await fetch(`${baseUrl}/global/dashboard`));
+      return readJsonResponse(await daemonFetch(`${baseUrl}/global/dashboard`));
     },
 
     async brainActions(input: { projectPath: string; limit?: number }): Promise<Array<{ at: string; actions: BrainAction[] }>> {
       const url = new URL(`${baseUrl}/brain/actions`);
       url.searchParams.set("projectPath", input.projectPath);
       if (input.limit) url.searchParams.set("limit", String(input.limit));
-      return readJsonResponse(await fetch(url));
+      return readJsonResponse(await daemonFetch(url));
     },
 
     async restoreBackup(input: { projectPath: string }): Promise<{ restored: boolean }> {
@@ -761,7 +786,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       if (input.query) url.searchParams.set("query", input.query);
       if (input.maxChars) url.searchParams.set("maxChars", String(input.maxChars));
       if (input.includeInactive) url.searchParams.set("includeInactive", "true");
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<ContextInjection>(response);
     },
 
@@ -775,7 +800,7 @@ function createDaemonBackedTools(daemonUrl: string): PeonTools {
       }
       if (input.limit) url.searchParams.set("limit", String(input.limit));
       if (input.maxProjects) url.searchParams.set("maxProjects", String(input.maxProjects));
-      const response = await fetch(url);
+      const response = await daemonFetch(url);
       return readJsonResponse<CrossProjectSearchToolResult>(response);
     },
 
@@ -824,12 +849,26 @@ function formatSearchInjectionPreview(records: RankedMemoryRecord[]): string {
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await daemonFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
   return readJsonResponse<T>(response);
+}
+
+/** fetch against the daemon, with an actionable error when nothing answers there. */
+async function daemonFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    const reason = (error as { cause?: { code?: string } }).cause?.code ?? (error instanceof Error ? error.message : String(error));
+    throw new Error(
+      `Peon daemon is not reachable at ${new URL(String(url)).origin} (${reason}). Start it with ` +
+        `"npx peon-mem install" (sets it up as a background service) or "npx peon-mem daemon", ` +
+        `or unset PEON_DAEMON_URL to run the tools in-process.`
+    );
+  }
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {

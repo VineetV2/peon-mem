@@ -233,4 +233,13 @@ export interface PeonTools {
 export declare function openStoreCacheStats(): {
     openStores: number;
 };
+/**
+ * PEON_DAEMON_URL as an http(s) base URL, or undefined to run the tools in-process.
+ *
+ * The variable is optional, and registry listings render it with a placeholder value
+ * ("your-peon-daemon-url-here"). A copied placeholder must not turn a working in-process
+ * server into one where every call fails, so anything that is not an http(s) URL is
+ * dropped with a warning on stderr (stdout carries the MCP protocol).
+ */
+export declare function resolveDaemonUrl(raw: string | undefined, warn?: (message: string) => void): string | undefined;
 export declare function createPeonTools(options?: CreatePeonToolsOptions): PeonTools;

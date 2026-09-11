@@ -56,6 +56,19 @@
   efficient known tokenizer rates, so untruncated CJK (0.45 tokens/char) and Cyrillic
   (0.22) prompts on hosted models are not refused.
 
+### Fixed — installing from the MCP registry or a marketplace works
+
+- The registry entry installs Peon as `npx -y peon-mem`. That ran the setup CLI, which
+  printed its help text and exited, so the MCP client got plain text instead of JSON-RPC
+  and every registry install was dead on arrival. `peon-mem` now serves MCP over stdio when
+  it is launched with no arguments by an MCP client (stdin is a pipe); a person at a
+  terminal still gets the help. `peon-mem mcp` does the same explicitly.
+- Marketplaces render the optional `PEON_DAEMON_URL` with a placeholder
+  (`your-peon-daemon-url-here`). Copied as-is, it made every tool call fail. A value that
+  is not an http(s) URL is now ignored with a warning, and the tools run in-process.
+- With the daemon down, daemon-backed tools failed with a bare `fetch failed`. They now
+  say the daemon is not reachable at which address, and how to start it.
+
 ### Security
 
 - **Cross-site browser requests are refused.** The daemon already rejected non-loopback
