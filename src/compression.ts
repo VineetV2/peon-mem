@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { Summarizer, TopicCluster } from "./brain.js";
 
@@ -18,7 +19,8 @@ export function createClusterSummarizer(config: PeonConfig): Summarizer | null {
       "Losing a specific fact is a failure; merge wording, never drop information. Drop only redundancy and filler. " +
       "Output ONLY the summary sentence(s) — no preamble, no markdown, no quotes around it. Max 240 characters.";
     const user = `Topic: ${cluster.entity}\n\nBeliefs to compress:\n${beliefs}\n\nOne compact summary:`;
-    const response = await fetch(llmEndpoint(config), {
+    const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+      signal: modelDeadline(config),
       method: "POST",
       headers: llmHeaders(config),
       body: JSON.stringify({
@@ -29,7 +31,7 @@ export function createClusterSummarizer(config: PeonConfig): Summarizer | null {
         ],
         temperature: 0.1
       })
-    });
+    }));
     if (!response.ok) throw new Error(`compression failed with ${response.status}`);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = json.choices?.[0]?.message?.content?.trim();

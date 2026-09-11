@@ -70,7 +70,7 @@ export declare class ModelTimeoutError extends Error {
 export declare class PromptTruncatedError extends Error {
     name: string;
 }
-/** Test hook: forget in-flight runs and the slot pool. */
+/** Test hook: forget in-flight runs and the model slot pool. */
 export declare function resetConsolidationScheduling(): void;
 export declare class PeonMemoryProcessor {
     private readonly config;

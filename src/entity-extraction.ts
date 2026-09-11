@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { FetchLike } from "./reranker.js";
 
@@ -54,7 +55,8 @@ export async function extractDomainEntitiesViaModel(items: ExtractItem[], option
   const user = `Snippets:\n${numbered}\n\nJSON array:`;
 
   try {
-    const response = await doFetch(llmEndpoint(config), {
+    const response = await withModelSlot(config, () => doFetch(llmEndpoint(config), {
+      signal: modelDeadline(config),
       method: "POST",
       headers: llmHeaders(config),
       body: JSON.stringify({
@@ -65,7 +67,7 @@ export async function extractDomainEntitiesViaModel(items: ExtractItem[], option
         ],
         temperature: 0
       })
-    });
+    }));
     if (!response.ok) return out;
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const parsed = parseEntityArray(json.choices?.[0]?.message?.content ?? "");

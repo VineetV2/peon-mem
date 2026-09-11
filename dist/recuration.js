@@ -1,3 +1,4 @@
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 const BATCH_SIZE = 30;
 const PER_BATCH_MAX_FRACTION = 0.4; // a batch that wants to drop more than this is misjudging — skip it
@@ -34,7 +35,8 @@ async function judgeBatch(config, batch) {
         "KEEP every decision, result/metric, preference, file, and open question unless it is pure setup-action noise. " +
         "You should typically remove only a small fraction; removing most beliefs is WRONG. When in any doubt, KEEP. " +
         "Output ONLY a JSON array of the ids to remove — no fences, no prose. If none, return [].";
-    const response = await fetch(llmEndpoint(config), {
+    const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+        signal: modelDeadline(config),
         method: "POST",
         headers: llmHeaders(config),
         body: JSON.stringify({
@@ -45,7 +47,7 @@ async function judgeBatch(config, batch) {
             ],
             temperature: 0.1
         })
-    });
+    }));
     if (!response.ok)
         throw new Error(`recuration failed with ${response.status}`);
     const json = (await response.json());
