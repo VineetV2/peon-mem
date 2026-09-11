@@ -1,3 +1,4 @@
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 const DEFAULT_MAX_ITEMS = 40;
 const DEFAULT_SNIPPET_CHARS = 240;
@@ -20,7 +21,8 @@ export async function extractDomainEntitiesViaModel(items, options) {
         '{"n": <snippet number>, "entities": ["..."]}, empty array when a snippet names none. No prose, no fences.';
     const user = `Snippets:\n${numbered}\n\nJSON array:`;
     try {
-        const response = await doFetch(llmEndpoint(config), {
+        const response = await withModelSlot(config, () => doFetch(llmEndpoint(config), {
+            signal: modelDeadline(config),
             method: "POST",
             headers: llmHeaders(config),
             body: JSON.stringify({
@@ -31,7 +33,7 @@ export async function extractDomainEntitiesViaModel(items, options) {
                 ],
                 temperature: 0
             })
-        });
+        }));
         if (!response.ok)
             return out;
         const json = (await response.json());

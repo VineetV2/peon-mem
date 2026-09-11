@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { MemoryRecord } from "./types.js";
 
@@ -36,7 +37,8 @@ export function createGlobalExtractor(config: PeonConfig): GlobalExtractor | nul
       "Example DROP (project-internal): 'The daemon exposes a /global/extract endpoint.' " +
       "Rewrite each as one self-contained sentence with zero project context. " +
       "Output ONLY a JSON array of strings — no markdown fences, no prose. If nothing qualifies, return []. Max 8 items.";
-    const response = await fetch(llmEndpoint(config), {
+    const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+      signal: modelDeadline(config),
       method: "POST",
       headers: llmHeaders(config),
       body: JSON.stringify({
@@ -47,7 +49,7 @@ export function createGlobalExtractor(config: PeonConfig): GlobalExtractor | nul
         ],
         temperature: 0.1
       })
-    });
+    }));
     if (!response.ok) throw new Error(`global extraction failed with ${response.status}`);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     return parseStringArray(json.choices?.[0]?.message?.content ?? "");

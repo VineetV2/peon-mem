@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed — one queue for every background model call
+
+- Consolidation, entity extraction, global extraction, brain compression and recuration
+  all call the same model server, but only consolidation took a slot. On a local server
+  the rest queued inside it: while one consolidation ran, global extraction and
+  compression ran alongside, two 4-minute generations shared the server (4m07s and
+  4m20s, just under Node's 300 s header limit), and another project's consolidation sat
+  25+ minutes unanswered. Every model request now takes a slot in one FIFO pool
+  (`src/model-slots.ts`: 1 at a time for a local provider, 2 hosted,
+  `PEON_CONSOLIDATION_CONCURRENCY` overrides) and releases it when its response
+  arrives. Background calls also get an explicit deadline (`PEON_LLM_TIMEOUT_MS`).
+  One run per project still holds; runs for different projects now interleave their
+  model calls instead of holding the model for a whole run.
+
 ### Fixed — a busy model server no longer stalls every prompt
 
 - Every prompt embeds its query before ranking memory. With the embedder on a small home

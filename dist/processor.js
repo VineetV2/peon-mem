@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { PeonMemoryStore, defaultMaxDeltaChars } from "./memory-store.js";
+import { resetModelSlots, withModelSlot } from "./model-slots.js";
 import { llmEnabled, loadPeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
 import { extractDomainEntitiesViaModel } from "./entity-extraction.js";
@@ -27,7 +28,9 @@ function grownDeltaCap(current) {
     return next >= defaultMaxDeltaChars() ? undefined : next;
 }
 // ── Consolidation scheduling ─────────────────────────────────────────────────────────
-// One consolidation per project at a time, and a small global cap on how many run at once.
+// One consolidation per project at a time. Model requests themselves go through the shared
+// slot pool in model-slots.ts, so runs for different projects interleave their model calls
+// instead of stacking generations inside one local server.
 // The model call sits outside store.runExclusive, so without this every hook trigger
 // (session_end, turn_end, subagent_end) started its own run on the SAME unconsumed chunk, and
 // several projects' backlogs queued inside one local model server, where a request waiting
@@ -36,47 +39,13 @@ function grownDeltaCap(current) {
 // before triggering, so every trigger for a project arrives with the same spelling.
 /** Runs that are queued or running, by project. Present means "this backlog is being handled". */
 const consolidationsInFlight = new Map();
-let consolidationSlots;
 function consolidationKey(projectPath) {
     return resolve(projectPath);
 }
-/**
- * The pool is sized on first use. A local model server works one request at a time, so a
- * second concurrent consolidation only queues inside it (and times out there); hosted APIs
- * parallelize, so allow a little. PEON_CONSOLIDATION_CONCURRENCY overrides either.
- */
-function slotsFor(config) {
-    consolidationSlots ??= new Semaphore(Math.max(1, config.consolidationConcurrency ?? (config.provider === "ollama" ? 1 : 2)));
-    return consolidationSlots;
-}
-/** Test hook: forget in-flight runs and the slot pool. */
+/** Test hook: forget in-flight runs and the model slot pool. */
 export function resetConsolidationScheduling() {
     consolidationsInFlight.clear();
-    consolidationSlots = undefined;
-}
-class Semaphore {
-    limit;
-    active = 0;
-    waiting = [];
-    constructor(limit) {
-        this.limit = limit;
-    }
-    async run(task) {
-        if (this.active < this.limit)
-            this.active += 1;
-        else
-            await new Promise((resume) => this.waiting.push(resume)); // a finishing run hands its slot over
-        try {
-            return await task();
-        }
-        finally {
-            const next = this.waiting.shift();
-            if (next)
-                next();
-            else
-                this.active -= 1;
-        }
-    }
+    resetModelSlots();
 }
 export class PeonMemoryProcessor {
     config;
@@ -96,7 +65,7 @@ export class PeonMemoryProcessor {
             await prior.catch(() => undefined);
         }
         // Registered synchronously after the loop, so a concurrent caller always sees it.
-        const run = slotsFor(this.config).run(() => this.consolidate(input));
+        const run = this.consolidate(input);
         consolidationsInFlight.set(key, run);
         try {
             return await run;
@@ -124,9 +93,7 @@ export class PeonMemoryProcessor {
                 model: "manual-ai-result",
                 estimatedTokens: 0
             }
-            : await this.modelClient
-                .processMemory({ rawMemory: deltaMemory, existingMemory, config: this.config, reason })
-                .catch(async (error) => {
+            : await withModelSlot(this.config, () => this.modelClient.processMemory({ rawMemory: deltaMemory, existingMemory, config: this.config, reason })).catch(async (error) => {
                 if (error instanceof ModelTimeoutError || error instanceof PromptTruncatedError) {
                     const current = deltaCap ?? defaultMaxDeltaChars();
                     const next = shrunkDeltaCap(current);

@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { MemoryRecord } from "./types.js";
 
@@ -46,7 +47,8 @@ async function judgeBatch(config: PeonConfig, batch: readonly MemoryRecord[]): P
       "KEEP every decision, result/metric, preference, file, and open question unless it is pure setup-action noise. " +
       "You should typically remove only a small fraction; removing most beliefs is WRONG. When in any doubt, KEEP. " +
       "Output ONLY a JSON array of the ids to remove — no fences, no prose. If none, return [].";
-    const response = await fetch(llmEndpoint(config), {
+    const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+      signal: modelDeadline(config),
       method: "POST",
       headers: llmHeaders(config),
       body: JSON.stringify({
@@ -57,7 +59,7 @@ async function judgeBatch(config: PeonConfig, batch: readonly MemoryRecord[]): P
         ],
         temperature: 0.1
       })
-    });
+    }));
     if (!response.ok) throw new Error(`recuration failed with ${response.status}`);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     return parseIdArray(json.choices?.[0]?.message?.content ?? "");

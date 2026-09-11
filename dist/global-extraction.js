@@ -1,3 +1,4 @@
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 export function createGlobalExtractor(config) {
     if (!llmEnabled(config))
@@ -23,7 +24,8 @@ export function createGlobalExtractor(config) {
             "Example DROP (project-internal): 'The daemon exposes a /global/extract endpoint.' " +
             "Rewrite each as one self-contained sentence with zero project context. " +
             "Output ONLY a JSON array of strings — no markdown fences, no prose. If nothing qualifies, return []. Max 8 items.";
-        const response = await fetch(llmEndpoint(config), {
+        const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+            signal: modelDeadline(config),
             method: "POST",
             headers: llmHeaders(config),
             body: JSON.stringify({
@@ -34,7 +36,7 @@ export function createGlobalExtractor(config) {
                 ],
                 temperature: 0.1
             })
-        });
+        }));
         if (!response.ok)
             throw new Error(`global extraction failed with ${response.status}`);
         const json = (await response.json());

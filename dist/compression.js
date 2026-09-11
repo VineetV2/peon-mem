@@ -1,3 +1,4 @@
+import { modelDeadline, withModelSlot } from "./model-slots.js";
 import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 /**
  * Builds the LLM summarizer the brain uses to compress a topic cluster into one
@@ -15,7 +16,8 @@ export function createClusterSummarizer(config) {
             "Losing a specific fact is a failure; merge wording, never drop information. Drop only redundancy and filler. " +
             "Output ONLY the summary sentence(s) — no preamble, no markdown, no quotes around it. Max 240 characters.";
         const user = `Topic: ${cluster.entity}\n\nBeliefs to compress:\n${beliefs}\n\nOne compact summary:`;
-        const response = await fetch(llmEndpoint(config), {
+        const response = await withModelSlot(config, () => fetch(llmEndpoint(config), {
+            signal: modelDeadline(config),
             method: "POST",
             headers: llmHeaders(config),
             body: JSON.stringify({
@@ -26,7 +28,7 @@ export function createClusterSummarizer(config) {
                 ],
                 temperature: 0.1
             })
-        });
+        }));
         if (!response.ok)
             throw new Error(`compression failed with ${response.status}`);
         const json = (await response.json());
