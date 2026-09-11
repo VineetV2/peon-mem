@@ -70,6 +70,8 @@ export declare class ModelTimeoutError extends Error {
 export declare class PromptTruncatedError extends Error {
     name: string;
 }
+/** Test hook: shorten the tracing thresholds. */
+export declare function setPhaseTraceTimings(slowMs: number, everyMs: number): void;
 /** Test hook: forget in-flight runs and the model slot pool. */
 export declare function resetConsolidationScheduling(): void;
 export declare class PeonMemoryProcessor {
@@ -83,6 +85,7 @@ export declare class PeonMemoryProcessor {
      */
     processMemory(input: ProcessMemoryInput): Promise<ProcessMemoryResult>;
     private consolidate;
+    private consolidateTraced;
     maybeProcessMemory(input: MaybeProcessMemoryInput): Promise<MaybeProcessMemoryResult>;
     /** The answer for a trigger that arrives while this project's backlog is already being handled. */
     private inProgress;
