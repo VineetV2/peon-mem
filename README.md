@@ -304,6 +304,8 @@ launchctl unload ~/Library/LaunchAgents/com.peon.daemon.plist
 | `PEON_MEMORY_DIR` | `.peon` | per-project brain dir name |
 | `PEON_DAEMON_URL` | `http://127.0.0.1:3737` | daemon address |
 | `PEON_CONSOLIDATION_MAX_DELTA_CHARS` | `60000` | anti truncation-stall chunking |
+| `PEON_CONSOLIDATION_CONCURRENCY` | `1` local, `2` hosted | consolidations allowed at once across projects |
+| `PEON_LLM_TIMEOUT_MS` | `600000` | deadline for one consolidation request |
 | `PEON_DISABLED` | — | hard off-switch for A/B testing |
 
 ## Project brains

@@ -15,6 +15,11 @@ export interface PeonConfig {
     memoryDirName: string;
     flushMinChars: number;
     aiMode: "off" | "gated";
+    /** Deadline for one consolidation request (PEON_LLM_TIMEOUT_MS). */
+    llmTimeoutMs?: number;
+    /** Consolidations allowed at once across projects (PEON_CONSOLIDATION_CONCURRENCY);
+     *  unset means 1 for a local provider, 2 for a hosted one. */
+    consolidationConcurrency?: number;
 }
 type Env = Record<string, string | undefined>;
 export declare function loadPeonConfig(env?: Env): PeonConfig;

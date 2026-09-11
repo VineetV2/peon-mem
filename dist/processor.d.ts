@@ -43,7 +43,7 @@ export interface MaybeProcessMemoryInput {
 }
 export interface ProcessingDecision {
     action: "process" | "skip";
-    reason: "forced" | "threshold_reached" | "below_threshold" | "ai_disabled" | "missing_api_key" | "empty_memory";
+    reason: "forced" | "threshold_reached" | "below_threshold" | "ai_disabled" | "missing_api_key" | "empty_memory" | "in_progress";
     trigger: string;
     rawChars: number;
     newChars: number;
@@ -62,12 +62,22 @@ export interface PeonMemoryProcessorOptions {
     config?: PeonConfig;
     modelClient?: MemoryModelClient;
 }
+/** Test hook: forget in-flight runs and the slot pool. */
+export declare function resetConsolidationScheduling(): void;
 export declare class PeonMemoryProcessor {
     private readonly config;
     private readonly modelClient;
     constructor(options?: PeonMemoryProcessorOptions);
+    /**
+     * Consolidate the next chunk of this project's session log. A call that arrives while
+     * another run for the project is queued or running waits for it, then takes the NEXT
+     * chunk (the cursor has moved), so nothing is applied twice.
+     */
     processMemory(input: ProcessMemoryInput): Promise<ProcessMemoryResult>;
+    private consolidate;
     maybeProcessMemory(input: MaybeProcessMemoryInput): Promise<MaybeProcessMemoryResult>;
+    /** The answer for a trigger that arrives while this project's backlog is already being handled. */
+    private inProgress;
 }
 export declare function decideProcessing(input: {
     rawChars: number;

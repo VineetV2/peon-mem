@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — consolidations no longer pile up
+
+- Each hook trigger (session end, turn end, subagent end) started its own consolidation,
+  and the model call runs outside the store lock, so one project could have several runs
+  consuming the SAME chunk at once. Observed with a local model: four overlapping runs of
+  one project, and when two succeed the chunk is applied twice. Now one run per project: a
+  trigger that arrives while a run is queued or running is skipped as `in_progress`
+  (without touching processing-state, whose read-modify-write could roll back the running
+  job's cursor). An explicit `process_memory` waits for it, then takes the next chunk.
+- Several projects' backlogs also queued inside a single local model server, where any
+  request waiting past Node fetch's 300 s header timeout failed (5 `fetch failed` in 20
+  minutes). Consolidations now share a small global pool: 1 at a time for a local
+  provider, 2 for a hosted one, `PEON_CONSOLIDATION_CONCURRENCY` to override. Work waits
+  inside Peon instead of timing out in the model server's queue.
+- The consolidation request has an explicit deadline (`PEON_LLM_TIMEOUT_MS`, default
+  600 s), and failures say what happened (a timeout, the 300 s header limit, or an
+  unreachable address) instead of a bare `fetch failed`.
+
 ## 1.0.9
 
 1.0.8 was published from a checkout taken before this fix merged, so it carries the

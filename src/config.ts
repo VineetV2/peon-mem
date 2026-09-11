@@ -19,6 +19,11 @@ export interface PeonConfig {
   memoryDirName: string;
   flushMinChars: number;
   aiMode: "off" | "gated";
+  /** Deadline for one consolidation request (PEON_LLM_TIMEOUT_MS). */
+  llmTimeoutMs?: number;
+  /** Consolidations allowed at once across projects (PEON_CONSOLIDATION_CONCURRENCY);
+   *  unset means 1 for a local provider, 2 for a hosted one. */
+  consolidationConcurrency?: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -89,7 +94,11 @@ export function loadPeonConfig(env: Env = process.env): PeonConfig {
     ollamaBaseUrl: optional(mergedEnv.PEON_OLLAMA_URL),
     memoryDirName: mergedEnv.PEON_MEMORY_DIR ?? ".peon",
     flushMinChars: numberFromEnv(mergedEnv.PEON_FLUSH_MIN_CHARS, 6000),
-    aiMode: mergedEnv.PEON_AI_MODE === "off" ? "off" : "gated"
+    aiMode: mergedEnv.PEON_AI_MODE === "off" ? "off" : "gated",
+    llmTimeoutMs: numberFromEnv(mergedEnv.PEON_LLM_TIMEOUT_MS, 600_000),
+    consolidationConcurrency: optional(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY)
+      ? numberFromEnv(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY, 1)
+      : undefined
   };
 }
 
