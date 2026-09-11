@@ -280,10 +280,10 @@ export class OllamaEmbeddingClient {
     async fetchEmbeddings(input) {
         const url = `${this.baseUrl}/api/embed`;
         const body = JSON.stringify({ model: this.model, input });
-        const attempt = async (fresh) => {
-            const headers = { "Content-Type": "application/json" };
-            if (fresh)
-                headers.connection = "close";
+        const attempt = async () => {
+            // Always a fresh connection: large replies wedge on reused keep-alive connections to a
+            // local server over Tailscale (see localConnectionHeaders in config.ts).
+            const headers = { "Content-Type": "application/json", connection: "close" };
             const response = await this.fetchImpl(url, { method: "POST", headers, body, signal: AbortSignal.timeout(this.requestTimeoutMs) });
             if (!response.ok) {
                 const text = (await response.text?.().catch(() => "")) ?? "";
@@ -293,13 +293,13 @@ export class OllamaEmbeddingClient {
             return (await response.json());
         };
         try {
-            return await attempt(false);
+            return await attempt();
         }
         catch (first) {
             if (first instanceof EmbeddingHttpError)
                 throw first;
             try {
-                return await attempt(true);
+                return await attempt();
             }
             catch (second) {
                 if (second instanceof EmbeddingHttpError)
