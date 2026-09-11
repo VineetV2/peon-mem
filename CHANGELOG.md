@@ -56,6 +56,22 @@
   efficient known tokenizer rates, so untruncated CJK (0.45 tokens/char) and Cyrillic
   (0.22) prompts on hosted models are not refused.
 
+### Security
+
+- **Cross-site browser requests are refused.** The daemon already rejected non-loopback
+  `Host` (DNS rebinding) and cross-origin `Origin`/`Referer`, which covers POSTs. But an
+  `<img>` or no-referrer fetch from another site sends neither header, and
+  `GET /context?projectPath=...` opens a store, which creates a `.peon/` brain at that path.
+  Any web page could plant brains in any directory the user can write. Browsers label those
+  requests `Sec-Fetch-Site: cross-site`, and the guard now refuses them. The hook, the MCP
+  server and curl send no such header; the monitor's own requests are `same-origin`.
+- **Dependency floors raised to patched versions:** `@modelcontextprotocol/sdk` `^1.29.0`
+  (GHSA-345p-7cg4-v4c7, GHSA-8r9q-7v3j-jr4g, GHSA-w48q-cv73-mx4w) and `vitest` `^4.1.11`
+  (GHSA-5xrq-8626-4rwp, GHSA-82fw-gwwq-j7x9). The lockfile already resolved to these, so
+  `npm audit` was clean; the old floors still admitted vulnerable versions. Peon's MCP server
+  uses the stdio transport, so the SDK's HTTP-transport advisories never applied, and vitest
+  is a dev dependency that is not installed for users.
+
 ## 1.0.7
 
 ### Fixed

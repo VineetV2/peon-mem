@@ -211,9 +211,9 @@ export function canonicalProjectPath(projectPath: string, home: string = homedir
 /**
  * Reject requests that aren't from a loopback caller — defeats DNS-rebinding and drive-by-localhost
  * attacks where a malicious web page POSTs to the daemon (which would otherwise write/read a brain
- * at an attacker-controlled path). A bad Host header (rebinding) or a cross-origin Origin/Referer
- * (browser drive-by) is refused. The node hook (no Origin) and the local monitor UI (loopback
- * Origin) both pass.
+ * at an attacker-controlled path). A bad Host header (rebinding), a cross-origin Origin/Referer
+ * (browser drive-by) or a browser's Sec-Fetch-Site: cross-site is refused. The node hook (no
+ * Origin) and the local monitor UI (loopback Origin, same-origin fetches) all pass.
  */
 function isLoopbackHostname(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -235,6 +235,11 @@ function isLocalRequest(request: IncomingMessage): boolean {
   const rawHost = request.headers.host;
   // A present Host must be loopback (a missing Host — rare, HTTP/1.0 — is allowed; bind is 127.0.0.1).
   if (rawHost !== undefined && !isLoopbackHostname(hostnameFromHostHeader(String(rawHost)))) return false;
+  // Browsers label every request with where it came from. An <img> or no-referrer fetch from
+  // another site carries no Origin or Referer, so the loop below cannot see it, yet a GET like
+  // /context?projectPath=... still creates a brain at that path. Non-browser callers (the hook,
+  // the MCP server, curl) send no Sec-Fetch-Site and are unaffected.
+  if (String(request.headers["sec-fetch-site"] ?? "").toLowerCase() === "cross-site") return false;
   for (const header of [request.headers.origin, request.headers.referer]) {
     if (!header) continue;
     try {
