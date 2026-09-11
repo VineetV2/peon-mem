@@ -63,7 +63,11 @@ export function loadPeonConfig(env = process.env) {
         ollamaBaseUrl: optional(mergedEnv.PEON_OLLAMA_URL),
         memoryDirName: mergedEnv.PEON_MEMORY_DIR ?? ".peon",
         flushMinChars: numberFromEnv(mergedEnv.PEON_FLUSH_MIN_CHARS, 6000),
-        aiMode: mergedEnv.PEON_AI_MODE === "off" ? "off" : "gated"
+        aiMode: mergedEnv.PEON_AI_MODE === "off" ? "off" : "gated",
+        llmTimeoutMs: numberFromEnv(mergedEnv.PEON_LLM_TIMEOUT_MS, 600_000),
+        consolidationConcurrency: optional(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY)
+            ? numberFromEnv(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY, 1)
+            : undefined
     };
 }
 export function readEnvFile(startDir = process.cwd()) {

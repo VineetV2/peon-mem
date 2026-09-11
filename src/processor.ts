@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { PeonMemoryStore } from "./memory-store.js";
 import { llmEnabled, loadPeonConfig, type PeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
@@ -48,7 +49,14 @@ export interface MaybeProcessMemoryInput {
 
 export interface ProcessingDecision {
   action: "process" | "skip";
-  reason: "forced" | "threshold_reached" | "below_threshold" | "ai_disabled" | "missing_api_key" | "empty_memory";
+  reason:
+    | "forced"
+    | "threshold_reached"
+    | "below_threshold"
+    | "ai_disabled"
+    | "missing_api_key"
+    | "empty_memory"
+    | "in_progress";
   trigger: string;
   rawChars: number;
   newChars: number;
@@ -72,6 +80,60 @@ export interface PeonMemoryProcessorOptions {
   modelClient?: MemoryModelClient;
 }
 
+// ── Consolidation scheduling ─────────────────────────────────────────────────────────
+// One consolidation per project at a time, and a small global cap on how many run at once.
+// The model call sits outside store.runExclusive, so without this every hook trigger
+// (session_end, turn_end, subagent_end) started its own run on the SAME unconsumed chunk, and
+// several projects' backlogs queued inside one local model server, where a request waiting
+// past Node fetch's 300 s header timeout failed. Module-level because tools.ts builds a new
+// processor per call. Keyed by the resolved project path: the daemon canonicalizes paths
+// before triggering, so every trigger for a project arrives with the same spelling.
+
+/** Runs that are queued or running, by project. Present means "this backlog is being handled". */
+const consolidationsInFlight = new Map<string, Promise<unknown>>();
+let consolidationSlots: Semaphore | undefined;
+
+function consolidationKey(projectPath: string): string {
+  return resolve(projectPath);
+}
+
+/**
+ * The pool is sized on first use. A local model server works one request at a time, so a
+ * second concurrent consolidation only queues inside it (and times out there); hosted APIs
+ * parallelize, so allow a little. PEON_CONSOLIDATION_CONCURRENCY overrides either.
+ */
+function slotsFor(config: PeonConfig): Semaphore {
+  consolidationSlots ??= new Semaphore(
+    Math.max(1, config.consolidationConcurrency ?? (config.provider === "ollama" ? 1 : 2))
+  );
+  return consolidationSlots;
+}
+
+/** Test hook: forget in-flight runs and the slot pool. */
+export function resetConsolidationScheduling(): void {
+  consolidationsInFlight.clear();
+  consolidationSlots = undefined;
+}
+
+class Semaphore {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active < this.limit) this.active += 1;
+    else await new Promise<void>((resume) => this.waiting.push(resume)); // a finishing run hands its slot over
+    try {
+      return await task();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.active -= 1;
+    }
+  }
+}
+
 export class PeonMemoryProcessor {
   private readonly config: PeonConfig;
   private readonly modelClient: MemoryModelClient;
@@ -81,7 +143,27 @@ export class PeonMemoryProcessor {
     this.modelClient = options.modelClient ?? new OpenRouterMemoryModelClient();
   }
 
+  /**
+   * Consolidate the next chunk of this project's session log. A call that arrives while
+   * another run for the project is queued or running waits for it, then takes the NEXT
+   * chunk (the cursor has moved), so nothing is applied twice.
+   */
   async processMemory(input: ProcessMemoryInput): Promise<ProcessMemoryResult> {
+    const key = consolidationKey(input.projectPath);
+    for (let prior = consolidationsInFlight.get(key); prior; prior = consolidationsInFlight.get(key)) {
+      await prior.catch(() => undefined);
+    }
+    // Registered synchronously after the loop, so a concurrent caller always sees it.
+    const run = slotsFor(this.config).run(() => this.consolidate(input));
+    consolidationsInFlight.set(key, run);
+    try {
+      return await run;
+    } finally {
+      if (consolidationsInFlight.get(key) === run) consolidationsInFlight.delete(key);
+    }
+  }
+
+  private async consolidate(input: ProcessMemoryInput): Promise<ProcessMemoryResult> {
     const store = await PeonMemoryStore.open({
       projectPath: input.projectPath,
       memoryDirName: this.config.memoryDirName
@@ -167,6 +249,12 @@ export class PeonMemoryProcessor {
   }
 
   async maybeProcessMemory(input: MaybeProcessMemoryInput): Promise<MaybeProcessMemoryResult> {
+    // A run for this project is already queued or running and will consume this backlog.
+    // Answer at once and leave processing-state alone: the read-modify-write below could land
+    // on top of the running job's cursor write and roll it back.
+    const key = consolidationKey(input.projectPath);
+    if (consolidationsInFlight.has(key)) return this.inProgress(input);
+
     const store = await PeonMemoryStore.open({
       projectPath: input.projectPath,
       memoryDirName: this.config.memoryDirName
@@ -199,6 +287,9 @@ export class PeonMemoryProcessor {
       return { status: "skipped", decision };
     }
 
+    // Re-check with no await before processMemory registers: of several triggers fired in the
+    // same tick, only the first to get here starts a run.
+    if (consolidationsInFlight.has(key)) return this.inProgress(input);
     const result = await this.processMemory({
       projectPath: input.projectPath,
       reason: `auto:${input.trigger}:${decision.reason}`,
@@ -222,6 +313,22 @@ export class PeonMemoryProcessor {
       status: "processed",
       decision,
       result
+    };
+  }
+
+  /** The answer for a trigger that arrives while this project's backlog is already being handled. */
+  private inProgress(input: MaybeProcessMemoryInput): MaybeProcessMemoryResult {
+    return {
+      status: "skipped",
+      decision: {
+        action: "skip",
+        reason: "in_progress",
+        trigger: input.trigger,
+        rawChars: 0, // deliberately not read: the running job owns this project's state
+        newChars: 0,
+        flushMinChars: this.config.flushMinChars,
+        estimatedTokens: 0
+      }
     };
   }
 }
@@ -289,7 +396,7 @@ export class OpenRouterMemoryModelClient implements MemoryModelClient {
     const userPrompt = userBlocks.join("\n");
 
     if (input.config.provider === "anthropic") return anthropicProcess(input, systemPrompt, userPrompt);
-    const response = await fetch(input.config.llmBaseUrl.replace(/\/$/, "") + "/chat/completions", {
+    const response = await requestModel(input.config, input.config.llmBaseUrl.replace(/\/$/, "") + "/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${input.config.llmApiKey ?? ""}`,
@@ -480,6 +587,43 @@ function isMemoryStatus(value: unknown): value is MemoryStatus {
   return value === "active" || value === "stale" || value === "conflicted" || value === "superseded" || value === "archived";
 }
 
+const DEFAULT_LLM_TIMEOUT_MS = 600_000;
+
+/**
+ * POST a consolidation request with an explicit deadline (PEON_LLM_TIMEOUT_MS, default
+ * 600 s) and errors that say what happened. Plain fetch reported every failure as
+ * "fetch failed". Every failure here throws before apply, so the session log is kept.
+ *
+ * Node's fetch also gives up by itself if no response headers arrive within 300 s. A
+ * non-streaming completion sends headers only when it is done, so that is the practical
+ * cap on one consolidation call: minutes-long local generations fit only while one model
+ * server isn't also serving other consolidations, which is what the slot pool ensures.
+ */
+async function requestModel(config: PeonConfig, url: string, init: RequestInit): Promise<Response> {
+  const timeoutMs = config.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    throw new Error(describeModelRequestFailure(error, url, timeoutMs));
+  }
+}
+
+function describeModelRequestFailure(error: unknown, url: string, timeoutMs: number): string {
+  const kept = "The session log was NOT consumed and will be retried.";
+  const slow =
+    "A local model server may be busy with other requests, or too slow for this chunk size " +
+    "(PEON_CONSOLIDATION_MAX_DELTA_CHARS).";
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return `The consolidation model did not answer within ${timeoutMs / 1000} s (PEON_LLM_TIMEOUT_MS). ${kept} ${slow}`;
+  }
+  const code = (error as { cause?: { code?: string } }).cause?.code;
+  if (code === "UND_ERR_HEADERS_TIMEOUT") {
+    return `The model server sent no response within 300 s, Node's fetch limit for response headers. ${kept} ${slow}`;
+  }
+  const reason = code ?? (error instanceof Error ? error.message : String(error));
+  return `Could not reach the model server at ${new URL(url).origin} (${reason}). ${kept}`;
+}
+
 function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
@@ -570,7 +714,7 @@ async function anthropicProcess(
   systemPrompt: string,
   userPrompt: string
 ): Promise<MemoryModelResult> {
-  const response = await fetch(input.config.llmBaseUrl.replace(/\/$/, "") + "/v1/messages", {
+  const response = await requestModel(input.config, input.config.llmBaseUrl.replace(/\/$/, "") + "/v1/messages", {
     method: "POST",
     headers: {
       "x-api-key": input.config.llmApiKey ?? "",
