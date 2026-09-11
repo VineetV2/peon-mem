@@ -1,5 +1,5 @@
 import { PeonMemoryStore } from "./memory-store.js";
-import { loadPeonConfig } from "./config.js";
+import { llmEnabled, loadPeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
 import { extractDomainEntitiesViaModel } from "./entity-extraction.js";
 export class PeonMemoryProcessor {
@@ -99,7 +99,9 @@ export class PeonMemoryProcessor {
             trigger: input.trigger,
             force: input.force ?? false,
             aiMode: this.config.aiMode,
-            hasApiKey: Boolean(this.config.openRouterApiKey),
+            // A local provider (Ollama) needs no key. Gating on openRouterApiKey here meant a
+            // fully-local setup skipped every automatic consolidation as "missing_api_key".
+            hasApiKey: llmEnabled(this.config),
             hasManualAiResult: Boolean(input.aiResult)
         });
         if (decision.action === "skip") {
@@ -215,6 +217,19 @@ export class OpenRouterMemoryModelClient {
             throw new Error(`OpenRouter memory processing failed with ${response.status}${body ? `: ${body}` : ""}`);
         }
         const json = (await response.json());
+        // A server whose context window is smaller than this prompt does not error: it
+        // keeps only the TAIL and silently drops the rest — which is the system prompt and
+        // the JSON schema. The model then answers without its instructions, and the result
+        // is empty or wrong. Refuse it rather than mark the session as consolidated.
+        const estimatedPromptTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+        const reportedPromptTokens = json.usage?.prompt_tokens;
+        if (detectPromptTruncation(estimatedPromptTokens, reportedPromptTokens)) {
+            throw new Error(`The model server truncated the consolidation prompt: it processed ${reportedPromptTokens} tokens ` +
+                `of roughly ${estimatedPromptTokens} sent. Its context window is too small, so the instructions and ` +
+                `schema were cut off and the result would be empty. The session log was NOT consumed and will be ` +
+                `retried. Fix: give the model a larger context window — for Ollama, create a model with ` +
+                `"PARAMETER num_ctx 32768" (or set OLLAMA_CONTEXT_LENGTH) and point PEON_PROCESSING_MODEL at it.`);
+        }
         const content = json.choices?.[0]?.message?.content;
         if (!content)
             throw new Error("OpenRouter memory processing response did not include content.");
@@ -355,6 +370,25 @@ function isMemoryStatus(value) {
 }
 function estimateTokens(text) {
     return Math.max(1, Math.ceil(text.length / 4));
+}
+/**
+ * Did the model server silently truncate the prompt?
+ *
+ * OpenAI-compatible servers report usage.prompt_tokens: what the model actually read.
+ * Ollama, at its 4096-token default, reports exactly 4096 for a ~17K-token prompt.
+ *
+ * The threshold has to respect how rough the estimate is. chars/4 OVER-estimates
+ * English (real text runs ~5.5 chars/token), so an untruncated prompt still reports
+ * only ~0.73 of the estimate. A truncated one reports ~0.24. Below 0.5 is unambiguous:
+ * reaching it without truncation would take 8+ chars per token. Small prompts are
+ * ignored, where estimation noise is a large share of the total.
+ */
+export function detectPromptTruncation(estimatedPromptTokens, reportedPromptTokens) {
+    if (!reportedPromptTokens || reportedPromptTokens <= 0)
+        return false; // no usage reported: cannot tell
+    if (estimatedPromptTokens - reportedPromptTokens < 1000)
+        return false;
+    return reportedPromptTokens / estimatedPromptTokens < 0.5;
 }
 function estimateTokensByChars(chars) {
     return Math.max(0, Math.ceil(chars / 4));
