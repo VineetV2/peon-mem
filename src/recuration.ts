@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { MemoryRecord } from "./types.js";
 
 /**
@@ -14,7 +15,7 @@ const BATCH_SIZE = 30;
 const PER_BATCH_MAX_FRACTION = 0.4; // a batch that wants to drop more than this is misjudging — skip it
 
 export function createRecurator(config: PeonConfig): Recurator | null {
-  if (config.aiMode === "off" || !config.openRouterApiKey) return null;
+  if (!llmEnabled(config)) return null;
   return async (records: readonly MemoryRecord[]): Promise<string[]> => {
     const active = records.filter((r) => r.status === "active" && !r.pinned);
     if (active.length === 0) return [];
@@ -45,9 +46,9 @@ async function judgeBatch(config: PeonConfig, batch: readonly MemoryRecord[]): P
       "KEEP every decision, result/metric, preference, file, and open question unless it is pure setup-action noise. " +
       "You should typically remove only a small fraction; removing most beliefs is WRONG. When in any doubt, KEEP. " +
       "Output ONLY a JSON array of the ids to remove — no fences, no prose. If none, return [].";
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch(llmEndpoint(config), {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+      headers: llmHeaders(config),
       body: JSON.stringify({
         model: config.processingModel,
         messages: [

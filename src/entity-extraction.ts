@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { FetchLike } from "./reranker.js";
 
 /**
@@ -35,7 +36,7 @@ const DEFAULT_SNIPPET_CHARS = 240;
 export async function extractDomainEntitiesViaModel(items: ExtractItem[], options: ExtractOptions): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   const { config } = options;
-  if (items.length === 0 || config.aiMode === "off" || !config.openRouterApiKey) return out;
+  if (items.length === 0 || !llmEnabled(config)) return out;
   const doFetch = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
   if (!doFetch) return out;
 
@@ -53,9 +54,9 @@ export async function extractDomainEntitiesViaModel(items: ExtractItem[], option
   const user = `Snippets:\n${numbered}\n\nJSON array:`;
 
   try {
-    const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await doFetch(llmEndpoint(config), {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+      headers: llmHeaders(config),
       body: JSON.stringify({
         model: options.model ?? config.processingModel,
         messages: [

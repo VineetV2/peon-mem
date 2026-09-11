@@ -1,10 +1,11 @@
+import { llmEnabled, llmEndpoint } from "./config.js";
 const DEFAULT_MAX_CHARS = 320;
 export async function expandQuery(query, options) {
     const q = (query ?? "").trim();
     if (!q)
         return { expanded: "", hypothetical: "" };
     const { config } = options;
-    if (config.aiMode === "off" || !config.openRouterApiKey)
+    if (!llmEnabled(config))
         return { expanded: q, hypothetical: "" };
     const doFetch = options.fetchImpl ?? globalThis.fetch;
     if (!doFetch)
@@ -16,10 +17,10 @@ export async function expandQuery(query, options) {
         "Do not hedge, do not say you lack context, do not ask questions. Output the sentences only.";
     const user = `Question: ${q}\n\nHypothetical answer:`;
     try {
-        const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await doFetch(llmEndpoint(config), {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${config.openRouterApiKey}`,
+                Authorization: `Bearer ${config.llmApiKey ?? config.openRouterApiKey ?? ""}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({

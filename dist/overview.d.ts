@@ -34,14 +34,26 @@ export interface DuplicatePair {
     bContent: string;
     similarity: number;
 }
-/**
- * Flag near-duplicate ACTIVE beliefs of the same type — a nudge for the user to
- * merge, not an automatic action. Conservative threshold to avoid false alarms.
- */
-export declare function detectDuplicates(records: readonly MemoryRecord[], options?: {
+/** How many record pairs the last duplicate scan actually compared. */
+export declare function duplicateScanStats(): {
+    pairsEvaluated: number;
+};
+export interface DetectDuplicatesOptions {
     threshold?: number;
     limit?: number;
-}): DuplicatePair[];
+    /** Compare every pair (the original scan). Kept for equivalence testing. */
+    exhaustive?: boolean;
+    maxTokenBucket?: number;
+}
+/**
+ * Near-duplicate belief pairs, strongest first.
+ *
+ * Previously this compared every active pair — ~20.4M jaccard computations on a
+ * 6.4k-active brain, to return the top 5 — on both the /overview endpoint and the
+ * consolidation auto-merge path. Candidates are now found through an inverted index
+ * on rare tokens, so the overwhelming majority of pairs are never scored.
+ */
+export declare function detectDuplicates(records: readonly MemoryRecord[], options?: DetectDuplicatesOptions): DuplicatePair[];
 export interface TokenSavings {
     onAvg: number;
     offAvg: number;

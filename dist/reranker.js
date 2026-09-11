@@ -1,3 +1,4 @@
+import { llmEnabled, llmEndpoint } from "./config.js";
 const DEFAULT_TOP_K = 20;
 const DEFAULT_SNIPPET_CHARS = 240;
 export async function rerankRecords(query, records, options) {
@@ -6,7 +7,7 @@ export async function rerankRecords(query, records, options) {
     // Cheap exits — never pay an LLM call when it cannot help.
     if (!q || records.length < 2)
         return records;
-    if (config.aiMode === "off" || !config.openRouterApiKey)
+    if (!llmEnabled(config))
         return records;
     const topK = Math.max(2, Math.trunc(options.topK ?? DEFAULT_TOP_K));
     const snippetChars = Math.max(40, Math.trunc(options.snippetChars ?? DEFAULT_SNIPPET_CHARS));
@@ -24,10 +25,10 @@ export async function rerankRecords(query, records, options) {
         "Include every number exactly once. No prose, no code fences.";
     const user = `Query: ${q}\n\nCandidates:\n${numbered}\n\nJSON array of numbers (most relevant first):`;
     try {
-        const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await doFetch(llmEndpoint(config), {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${config.openRouterApiKey}`,
+                Authorization: `Bearer ${config.llmApiKey ?? config.openRouterApiKey ?? ""}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({

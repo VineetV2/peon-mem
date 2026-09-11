@@ -121,36 +121,184 @@ export function deduplicateMemoryRecords(records: MemoryRecord[]): DeduplicateMe
   };
 }
 
-export function detectMemoryConflicts(records: MemoryRecord[]): MemoryConflict[] {
-  const conflicts: MemoryConflict[] = [];
+/**
+ * An entity attached to more records than this is not evidence that two beliefs are
+ * about the same thing — on a research brain "peon" or "BIRD" appears on thousands of
+ * records, and pairing them all is what made this scan quadratic. Such buckets are
+ * skipped; a conflict between two beliefs whose ONLY link is a ubiquitous tag is
+ * exactly the false positive the same-topic gate already exists to suppress.
+ */
+const MAX_ENTITY_BUCKET = Number(process.env.PEON_CONFLICT_MAX_ENTITY_BUCKET) > 0
+  ? Number(process.env.PEON_CONFLICT_MAX_ENTITY_BUCKET)
+  : 2000;
 
-  for (let leftIndex = 0; leftIndex < records.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < records.length; rightIndex += 1) {
-      const left = records[leftIndex];
-      const right = records[rightIndex];
-      const entity = sharedEntity(left, right);
-      if (!entity) continue;
+const OPPOSING_WORD_PAIRS: ReadonlyArray<readonly [string, string, string]> = [
+  ["enabled", "disabled", "opposing enabled/disabled language"],
+  ["enable", "disable", "opposing enable/disable language"],
+  ["allowed", "forbidden", "opposing allowed/forbidden language"],
+  ["allow", "deny", "opposing allow/deny language"],
+  ["required", "optional", "opposing required/optional language"],
+  ["true", "false", "opposing true/false language"],
+  ["yes", "no", "opposing yes/no language"],
+  ["use", "avoid", "opposing use/avoid language"]
+];
 
-      const reason = opposingLanguageReason(left.content, right.content);
-      if (!reason) continue;
+export interface DetectConflictOptions {
+  /** Compare every pair (the original scan). Kept for equivalence testing. */
+  exhaustive?: boolean;
+  /** Override the ubiquitous-entity bucket cap (default MAX_ENTITY_BUCKET). */
+  maxEntityBucket?: number;
+}
 
-      // Same-topic gate. A shared entity + one opposing word-pair somewhere in two long beliefs
-      // is a weak signal: on a research brain, dozens of beliefs all mention "BIRD" and one says
-      // "use X" while an unrelated one says "avoid Y". They don't contradict — they're just both
-      // about BIRD. Require the two beliefs to actually be discussing the same thing before
-      // calling it a conflict: several shared entities, or real content overlap beyond the token.
-      if (!sameTopic(left, right)) continue;
+interface PreparedConflictRecord {
+  record: MemoryRecord;
+  /** [normalized, original] in the record's own entity order. */
+  entityPairs: Array<[string, string]>;
+  entityByNormalized: Map<string, string>;
+  normalizedEntities: Set<string>;
+  /** Whitespace-delimited tokens of the normalized content. */
+  words: Set<string>;
+  topicTokens: Set<string>;
+}
 
-      conflicts.push({
-        entity,
-        leftId: left.id,
-        rightId: right.id,
-        reason
-      });
+let lastPairsEvaluated = 0;
+
+/** How many record pairs the last scan actually string-compared. */
+export function conflictScanStats(): { pairsEvaluated: number } {
+  return { pairsEvaluated: lastPairsEvaluated };
+}
+
+function prepareForConflicts(records: MemoryRecord[]): PreparedConflictRecord[] {
+  return records.map((record) => {
+    const entityPairs = record.entities.map(
+      (entity) => [normalizeEntity(entity), entity] as [string, string]
+    );
+    const entityByNormalized = new Map<string, string>();
+    // Later duplicates lose, matching the original Map-from-entries behaviour.
+    for (const [normalized, original] of entityPairs) entityByNormalized.set(normalized, original);
+    const text = normalizeMemory(record.content);
+    return {
+      record,
+      entityPairs,
+      entityByNormalized,
+      normalizedEntities: new Set(entityPairs.map(([normalized]) => normalized)),
+      words: new Set(text.split(" ").filter(Boolean)),
+      topicTokens: contentTokens(record.content)
+    };
+  });
+}
+
+function sharedEntityOf(
+  left: PreparedConflictRecord,
+  right: PreparedConflictRecord
+): string | undefined {
+  for (const [normalized, original] of left.entityPairs) {
+    const match = right.entityByNormalized.get(normalized);
+    if (match) return original.trim() || match;
+  }
+  return undefined;
+}
+
+/**
+ * Word presence via the precomputed token set. normalizeMemory() strips punctuation
+ * and collapses whitespace, so the old `(^|\s)word($|\s)` regex was exactly a test
+ * for "word is a whitespace-delimited token" — a Set lookup is equivalent, without
+ * building a RegExp per check.
+ */
+function opposingReasonOf(
+  left: PreparedConflictRecord,
+  right: PreparedConflictRecord
+): string | undefined {
+  for (const [positive, negative, reason] of OPPOSING_WORD_PAIRS) {
+    if (left.words.has(positive) && right.words.has(negative)) return reason;
+    if (left.words.has(negative) && right.words.has(positive)) return reason;
+  }
+  return undefined;
+}
+
+function sameTopicOf(left: PreparedConflictRecord, right: PreparedConflictRecord): boolean {
+  let sharedEntities = 0;
+  for (const entity of left.normalizedEntities) if (right.normalizedEntities.has(entity)) sharedEntities += 1;
+  if (sharedEntities >= 2) return true;
+
+  if (left.topicTokens.size === 0 || right.topicTokens.size === 0) return false;
+  let intersection = 0;
+  for (const token of left.topicTokens) if (right.topicTokens.has(token)) intersection += 1;
+  const jaccard = intersection / (left.topicTokens.size + right.topicTokens.size - intersection);
+  return jaccard >= 0.25;
+}
+
+/**
+ * Conflicts require a shared entity, so only pairs that co-occur in some entity's
+ * bucket can ever qualify. Indexing by entity skips the overwhelming majority of
+ * pairs without touching a string; everything derived per record (normalized text,
+ * token sets, entity maps) is computed once instead of once per pair.
+ */
+export function detectMemoryConflicts(
+  records: MemoryRecord[],
+  options: DetectConflictOptions = {}
+): MemoryConflict[] {
+  const prepared = prepareForConflicts(records);
+  const found: Array<{ leftIndex: number; rightIndex: number; conflict: MemoryConflict }> = [];
+  let pairsEvaluated = 0;
+
+  const evaluate = (leftIndex: number, rightIndex: number): void => {
+    pairsEvaluated += 1;
+    const left = prepared[leftIndex];
+    const right = prepared[rightIndex];
+    const entity = sharedEntityOf(left, right);
+    if (!entity) return;
+    const reason = opposingReasonOf(left, right);
+    if (!reason) return;
+    // Same-topic gate. A shared entity + one opposing word-pair somewhere in two long beliefs
+    // is a weak signal: on a research brain, dozens of beliefs all mention "BIRD" and one says
+    // "use X" while an unrelated one says "avoid Y". They don't contradict — they're just both
+    // about BIRD. Require the two beliefs to actually be discussing the same thing before
+    // calling it a conflict: several shared entities, or real content overlap beyond the token.
+    if (!sameTopicOf(left, right)) return;
+    found.push({
+      leftIndex,
+      rightIndex,
+      conflict: { entity, leftId: left.record.id, rightId: right.record.id, reason }
+    });
+  };
+
+  if (options.exhaustive) {
+    for (let leftIndex = 0; leftIndex < prepared.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < prepared.length; rightIndex += 1) {
+        evaluate(leftIndex, rightIndex);
+      }
     }
+  } else {
+    const byEntity = new Map<string, number[]>();
+    for (let index = 0; index < prepared.length; index += 1) {
+      for (const entity of prepared[index].normalizedEntities) {
+        const bucket = byEntity.get(entity);
+        if (bucket) bucket.push(index);
+        else byEntity.set(entity, [index]);
+      }
+    }
+    const seen = new Set<number>();
+    const width = prepared.length;
+    for (const bucket of byEntity.values()) {
+      if (bucket.length > (options.maxEntityBucket ?? MAX_ENTITY_BUCKET)) continue;
+      for (let a = 0; a < bucket.length; a += 1) {
+        for (let b = a + 1; b < bucket.length; b += 1) {
+          const leftIndex = bucket[a];
+          const rightIndex = bucket[b];
+          const key = leftIndex * width + rightIndex;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          evaluate(leftIndex, rightIndex);
+        }
+      }
+    }
+    // Restore the original left-to-right emission order.
+    found.sort((x, y) => x.leftIndex - y.leftIndex || x.rightIndex - y.rightIndex);
   }
 
-  return conflicts;
+  lastPairsEvaluated = pairsEvaluated;
+  return found.map((entry) => entry.conflict);
 }
 
 export function markStaleMemoryRecords(

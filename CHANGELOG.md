@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.0.8
+
+### Fixed — the daemon no longer wedges on large brains
+
+- **Quadratic conflict scan.** `detectMemoryConflicts` compared every pair of records,
+  rebuilding an entity map, re-normalizing both contents and constructing up to 16
+  RegExps per pair. On a 30.8k-record brain that is 280,762,056 pairs; a CPU profile
+  of the live daemon put 93% of all time there and requests stopped answering.
+  Candidates are now indexed by shared entity and per-record data is computed once.
+  Measured on the real brain: 12,567ms -> 2,314ms with identical results (112/112
+  conflicts), or 379ms with a tighter bucket cap. `PEON_CONFLICT_MAX_ENTITY_BUCKET`.
+- **Unbounded caches.** The embedding sidecar cache pinned every project's vectors
+  forever (a heap snapshot showed 338 MB across 8 stores), and the open-store map never
+  released a project. Both are now LRU-bounded with a TTL and an idle sweeper.
+  `PEON_EMBED_CACHE_STORES`, `PEON_EMBED_CACHE_TTL_MS`, `PEON_MAX_OPEN_STORES`.
+- **Logger read the whole log on every poll.** `recent()` slurped a 106 MB file and
+  split it to keep 100 lines. It now reads a bounded tail, and the log rotates.
+- **Quadratic duplicate scan.** `detectDuplicates` is now indexed on rare tokens:
+  6x fewer comparisons on the real brain, identical results.
+- **Quadratic semantic dedup.** Bucketed candidate search with a per-record cap, and
+  cooperative yielding so a long pass cannot starve the event loop.
+
+### Fixed — local-only mode actually works
+
+- Six modules hardcoded the OpenRouter URL and gated on `openRouterApiKey`, so with
+  `PEON_PROVIDER=ollama` and no key, entity extraction, HyDE, reranking, compression,
+  recuration and global extraction silently did nothing. They now route through
+  `llmEnabled` / `llmEndpoint` / `llmHeaders`.
+- Consolidation requests `response_format: json_object`. Local 7B models otherwise
+  reply conversationally and every consolidation is lost to a parse error.
+
 ## 1.0.7
 
 ### Fixed

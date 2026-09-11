@@ -226,6 +226,23 @@ export interface PeonTools {
   maybeProcessMemory(input: MaybeProcessMemoryToolInput): Promise<MaybeProcessMemoryResult>;
 }
 
+/**
+ * Open memory stores are cached per project so repeated calls don't reopen a brain.
+ * Left unbounded, every project the daemon ever touched stayed resident — and each
+ * store carries an EmbeddingStore whose sidecar cache holds real memory. Bound it:
+ * an evicted project simply reopens on next use, which costs one open, not accuracy.
+ */
+const MAX_OPEN_STORES = Number(process.env.PEON_MAX_OPEN_STORES) > 0
+  ? Number(process.env.PEON_MAX_OPEN_STORES)
+  : 4;
+
+let openStoreCount = 0;
+
+/** How many project stores are currently held open. */
+export function openStoreCacheStats(): { openStores: number } {
+  return { openStores: openStoreCount };
+}
+
 export function createPeonTools(options: CreatePeonToolsOptions = {}): PeonTools {
   if (options.daemonUrl) {
     return createDaemonBackedTools(options.daemonUrl);
@@ -237,9 +254,21 @@ export function createPeonTools(options: CreatePeonToolsOptions = {}): PeonTools
 
   async function storeFor(projectPath: string): Promise<PeonMemoryStore> {
     const existing = storesByProject.get(projectPath);
-    if (existing) return existing;
+    if (existing) {
+      // Re-insert so Map iteration order stays least-recently-used first.
+      storesByProject.delete(projectPath);
+      storesByProject.set(projectPath, existing);
+      openStoreCount = storesByProject.size;
+      return existing;
+    }
     const store = await PeonMemoryStore.open({ projectPath });
     storesByProject.set(projectPath, store);
+    while (storesByProject.size > MAX_OPEN_STORES) {
+      const oldest = storesByProject.keys().next().value;
+      if (oldest === undefined) break;
+      storesByProject.delete(oldest);
+    }
+    openStoreCount = storesByProject.size;
     return store;
   }
 

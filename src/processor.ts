@@ -303,6 +303,11 @@ export class OpenRouterMemoryModelClient implements MemoryModelClient {
         // Reserve explicit output room. Without this, OpenRouter applies the provider's default
         // completion cap, which — paired with the delta cap on the input side — keeps the JSON
         // reply from truncating mid-object. Env-tunable for very large brains.
+        // Force a JSON-object reply. A hosted model usually obeys "reply with JSON" from
+        // the prompt alone; a local 7B often answers conversationally instead ("It sounds
+        // like..."), which fails the parse and loses the whole consolidation. Ollama and
+        // the OpenAI API both honour this flag, so ask for it rather than trusting prose.
+        response_format: { type: "json_object" },
         max_tokens: Number(process.env.PEON_CONSOLIDATION_MAX_TOKENS) || 8192
       })
     });
