@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { MemoryRecord } from "./types.js";
 
 /**
@@ -13,7 +14,7 @@ import type { MemoryRecord } from "./types.js";
 export type GlobalExtractor = (records: readonly MemoryRecord[]) => Promise<string[]>;
 
 export function createGlobalExtractor(config: PeonConfig): GlobalExtractor | null {
-  if (config.aiMode === "off" || !config.openRouterApiKey) return null;
+  if (!llmEnabled(config)) return null;
   return async (records: readonly MemoryRecord[]): Promise<string[]> => {
     // Send the highest-signal beliefs only — bounds tokens, focuses the model.
     const candidates = records
@@ -35,9 +36,9 @@ export function createGlobalExtractor(config: PeonConfig): GlobalExtractor | nul
       "Example DROP (project-internal): 'The daemon exposes a /global/extract endpoint.' " +
       "Rewrite each as one self-contained sentence with zero project context. " +
       "Output ONLY a JSON array of strings — no markdown fences, no prose. If nothing qualifies, return []. Max 8 items.";
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch(llmEndpoint(config), {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+      headers: llmHeaders(config),
       body: JSON.stringify({
         model: config.processingModel,
         messages: [

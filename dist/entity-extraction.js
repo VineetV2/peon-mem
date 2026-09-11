@@ -1,9 +1,10 @@
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 const DEFAULT_MAX_ITEMS = 40;
 const DEFAULT_SNIPPET_CHARS = 240;
 export async function extractDomainEntitiesViaModel(items, options) {
     const out = new Map();
     const { config } = options;
-    if (items.length === 0 || config.aiMode === "off" || !config.openRouterApiKey)
+    if (items.length === 0 || !llmEnabled(config))
         return out;
     const doFetch = options.fetchImpl ?? globalThis.fetch;
     if (!doFetch)
@@ -19,9 +20,9 @@ export async function extractDomainEntitiesViaModel(items, options) {
         '{"n": <snippet number>, "entities": ["..."]}, empty array when a snippet names none. No prose, no fences.';
     const user = `Snippets:\n${numbered}\n\nJSON array:`;
     try {
-        const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await doFetch(llmEndpoint(config), {
             method: "POST",
-            headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+            headers: llmHeaders(config),
             body: JSON.stringify({
                 model: options.model ?? config.processingModel,
                 messages: [

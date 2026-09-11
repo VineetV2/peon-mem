@@ -20,6 +20,14 @@ export interface SyncResult {
     reused: number;
     pruned: number;
 }
+export declare function embeddingCacheStats(): {
+    cachedStores: number;
+    diskReads: number;
+    reads: number;
+    expireOlderThan: (now: number) => void;
+};
+/** Test helper: forget every cached sidecar. */
+export declare function resetEmbeddingCaches(): void;
 /** Test helper: forget learned widths, simulating a fresh daemon process. */
 export declare function resetEmbeddingDimensionCache(): void;
 export declare class EmbeddingStore {
@@ -35,6 +43,8 @@ export declare class EmbeddingStore {
      * empty map rather than throwing (retrieval falls back to lexical-only).
      */
     sync(records: MemoryRecord[], client: EmbeddingClient | null): Promise<SyncResult>;
+    /** Release this store's parsed sidecar. Costs one re-read, never correctness. */
+    dropCache(): void;
     /** Read vectors without recomputing — used by read-only retrieval paths. */
     vectorById(): Promise<Map<string, EmbeddingVector>>;
     private persist;

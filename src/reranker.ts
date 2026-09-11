@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { RankedMemoryRecord } from "./retrieval.js";
 
 /**
@@ -40,7 +41,7 @@ export async function rerankRecords(
   const q = (query ?? "").trim();
   // Cheap exits — never pay an LLM call when it cannot help.
   if (!q || records.length < 2) return records;
-  if (config.aiMode === "off" || !config.openRouterApiKey) return records;
+  if (!llmEnabled(config)) return records;
 
   const topK = Math.max(2, Math.trunc(options.topK ?? DEFAULT_TOP_K));
   const snippetChars = Math.max(40, Math.trunc(options.snippetChars ?? DEFAULT_SNIPPET_CHARS));
@@ -60,10 +61,10 @@ export async function rerankRecords(
   const user = `Query: ${q}\n\nCandidates:\n${numbered}\n\nJSON array of numbers (most relevant first):`;
 
   try {
-    const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await doFetch(llmEndpoint(config), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.openRouterApiKey}`,
+        Authorization: `Bearer ${config.llmApiKey ?? config.openRouterApiKey ?? ""}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({

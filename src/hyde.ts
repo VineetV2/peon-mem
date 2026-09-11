@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { FetchLike } from "./reranker.js";
 
 /**
@@ -38,7 +39,7 @@ export async function expandQuery(query: string | undefined, options: HydeOption
   const q = (query ?? "").trim();
   if (!q) return { expanded: "", hypothetical: "" };
   const { config } = options;
-  if (config.aiMode === "off" || !config.openRouterApiKey) return { expanded: q, hypothetical: "" };
+  if (!llmEnabled(config)) return { expanded: q, hypothetical: "" };
 
   const doFetch = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
   if (!doFetch) return { expanded: q, hypothetical: "" };
@@ -52,10 +53,10 @@ export async function expandQuery(query: string | undefined, options: HydeOption
   const user = `Question: ${q}\n\nHypothetical answer:`;
 
   try {
-    const response = await doFetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await doFetch(llmEndpoint(config), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.openRouterApiKey}`,
+        Authorization: `Bearer ${config.llmApiKey ?? config.openRouterApiKey ?? ""}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({

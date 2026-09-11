@@ -26,6 +26,76 @@ export interface SyncResult {
   pruned: number;
 }
 
+/**
+ * Bounded registry of live sidecar caches.
+ *
+ * The cache below keeps a whole embeddings.jsonl parsed in memory so read-only
+ * retrieval doesn't re-parse a multi-MB file on every prompt. That is a real win,
+ * but the daemon holds one store per project and nothing evicted: a heap snapshot
+ * showed 8 stores pinning 60,288 Float32Array vectors / 338 MB of native backing,
+ * with RSS past 1.9 GB — enough GC pressure to peg the CPU and stop the daemon
+ * answering. So caches are now LRU-bounded and released once idle; a dropped cache
+ * costs one re-read, never correctness.
+ */
+const MAX_CACHED_STORES = Number(process.env.PEON_EMBED_CACHE_STORES) > 0
+  ? Number(process.env.PEON_EMBED_CACHE_STORES)
+  : 2;
+const CACHE_TTL_MS = Number(process.env.PEON_EMBED_CACHE_TTL_MS) > 0
+  ? Number(process.env.PEON_EMBED_CACHE_TTL_MS)
+  : 5 * 60 * 1000;
+
+/** Insertion order is LRU order: least-recently-used first. */
+const liveCaches = new Map<EmbeddingStore, number>();
+let diskReads = 0;
+
+function touchCache(store: EmbeddingStore, at: number): void {
+  liveCaches.delete(store);
+  liveCaches.set(store, at);
+  pruneCaches(at);
+}
+
+function pruneCaches(now: number): void {
+  for (const [store, touchedAt] of [...liveCaches]) {
+    if (now - touchedAt > CACHE_TTL_MS) {
+      store.dropCache();
+      liveCaches.delete(store);
+    }
+  }
+  while (liveCaches.size > MAX_CACHED_STORES) {
+    const oldest = liveCaches.keys().next().value;
+    if (!oldest) break;
+    oldest.dropCache();
+    liveCaches.delete(oldest);
+  }
+}
+
+// TTL alone only fires on activity, so an idle daemon would hold its last caches
+// forever. A low-frequency sweeper lets a quiet daemon settle back down; unref'd
+// so it never keeps the process alive on its own.
+const sweeper = setInterval(() => pruneCaches(Date.now()), 60_000);
+if (typeof sweeper.unref === "function") sweeper.unref();
+
+export function embeddingCacheStats(): {
+  cachedStores: number;
+  diskReads: number;
+  reads: number;
+  expireOlderThan: (now: number) => void;
+} {
+  return {
+    cachedStores: liveCaches.size,
+    diskReads,
+    reads: diskReads,
+    expireOlderThan: (now: number) => pruneCaches(now)
+  };
+}
+
+/** Test helper: forget every cached sidecar. */
+export function resetEmbeddingCaches(): void {
+  for (const store of [...liveCaches.keys()]) store.dropCache();
+  liveCaches.clear();
+  diskReads = 0;
+}
+
 /** Real output width per embedding model, learned once per process. */
 const modelDimensions = new Map<string, number>();
 
@@ -55,8 +125,12 @@ export class EmbeddingStore {
     } catch {
       mtimeMs = 0; // missing file → treat as empty, mtime 0
     }
-    if (this.cache && this.cache.mtimeMs === mtimeMs) return this.cache.map;
+    if (this.cache && this.cache.mtimeMs === mtimeMs) {
+      touchCache(this, Date.now());
+      return this.cache.map;
+    }
 
+    diskReads += 1;
     const raw = await readFile(this.filePath, "utf8").catch(() => "");
     const map = new Map<string, StoredEmbedding>();
     for (const line of raw.split(/\r?\n/)) {
@@ -70,6 +144,7 @@ export class EmbeddingStore {
       }
     }
     this.cache = { mtimeMs, map };
+    touchCache(this, Date.now());
     return map;
   }
 
@@ -89,20 +164,19 @@ export class EmbeddingStore {
     const pruned = [...existing.keys()].filter((id) => !liveIds.has(id)).length;
 
     // A stored vector can carry the right model name and hash yet the wrong width —
-    // that is what a degraded fallback wrote — and cosineSimilarity returns 0 on a
-    // length mismatch, so those records vanish from semantic recall without erroring.
-    // Width is part of validity. Learning it must not cost a round trip per sync, so
-    // it is cached per model and only probed when nothing else needs recomputing:
-    // precisely the case where a fully-poisoned sidecar looks entirely reusable.
-    const matchesStored = (record: MemoryRecord): StoredEmbedding | undefined => {
-      const prior = existing.get(record.id);
-      return prior && prior.model === client.model && prior.hash === contentHash(embeddingText(record))
-        ? prior
-        : undefined;
-    };
-
+    // that is exactly what a degraded fallback wrote — and cosineSimilarity scores any
+    // width mismatch as 0, so those records vanish from semantic recall without ever
+    // erroring. Width is part of validity, so we need to know the client's real width.
+    //
+    // Learning it must not cost a round trip on every sync: the width is cached per
+    // model for the process, and only probed when there is nothing to compute (the
+    // one case where a fully-poisoned sidecar would otherwise look entirely reusable).
     let expectedDim = modelDimensions.get(client.model) ?? 0;
-    if (expectedDim === 0 && records.length > 0 && records.every((record) => matchesStored(record))) {
+    const nothingToRecompute = records.every((record) => {
+      const prior = existing.get(record.id);
+      return prior && prior.model === client.model && prior.hash === contentHash(embeddingText(record));
+    });
+    if (expectedDim === 0 && records.length > 0 && nothingToRecompute) {
       try {
         const probe = await client.embed([embeddingText(records[0])]);
         if (!(client as { degraded?: boolean }).degraded && probe[0]?.length) {
@@ -113,13 +187,19 @@ export class EmbeddingStore {
         expectedDim = 0; // cannot probe — fall back to model+hash validity only
       }
     }
-    const valid = (prior: StoredEmbedding | undefined): prior is StoredEmbedding =>
-      Boolean(prior) && (expectedDim === 0 || prior!.vector.length === expectedDim);
+
+    const validDim = (vector: EmbeddingVector): boolean => expectedDim === 0 || vector.length === expectedDim;
 
     const toCompute: MemoryRecord[] = [];
     let reused = 0;
     for (const record of records) {
-      if (valid(matchesStored(record))) {
+      const prior = existing.get(record.id);
+      if (
+        prior &&
+        prior.model === client.model &&
+        prior.hash === contentHash(embeddingText(record)) &&
+        validDim(prior.vector)
+      ) {
         reused += 1;
       } else {
         toCompute.push(record);
@@ -128,8 +208,15 @@ export class EmbeddingStore {
 
     const result = new Map<string, StoredEmbedding>();
     for (const record of records) {
-      const prior = matchesStored(record);
-      if (valid(prior)) result.set(record.id, prior);
+      const prior = existing.get(record.id);
+      if (
+        prior &&
+        prior.model === client.model &&
+        prior.hash === contentHash(embeddingText(record)) &&
+        validDim(prior.vector)
+      ) {
+        result.set(record.id, prior);
+      }
     }
 
     let computed = 0;
@@ -137,8 +224,8 @@ export class EmbeddingStore {
       try {
         const vectors = await client.embed(toCompute.map((record) => embeddingText(record)));
         // A degraded run returns local trigram vectors. Serving them for THIS call is
-        // graceful degradation; writing them under the primary model's name is not —
-        // they would be reused forever as if they were real embeddings.
+        // fine (graceful degradation); writing them under the primary's model name is
+        // not — they would be reused forever as if they were real embeddings.
         if ((client as { degraded?: boolean }).degraded) {
           const degradedById = new Map<string, EmbeddingVector>();
           for (const [id, stored] of result) degradedById.set(id, stored.vector);
@@ -174,6 +261,11 @@ export class EmbeddingStore {
     return { vectorById, computed, reused, pruned };
   }
 
+  /** Release this store's parsed sidecar. Costs one re-read, never correctness. */
+  dropCache(): void {
+    this.cache = undefined;
+  }
+
   /** Read vectors without recomputing — used by read-only retrieval paths. */
   async vectorById(): Promise<Map<string, EmbeddingVector>> {
     const stored = await this.load();
@@ -196,6 +288,7 @@ export class EmbeddingStore {
     await writeFile(tmp, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf8");
     await rename(tmp, this.filePath);
     this.cache = undefined; // invalidate; next load() re-reads the fresh file
+    liveCaches.delete(this);
   }
 }
 

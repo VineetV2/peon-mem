@@ -229,4 +229,8 @@ export interface PeonTools {
     processMemory(input: ProcessMemoryToolInput): Promise<ProcessMemoryResult>;
     maybeProcessMemory(input: MaybeProcessMemoryToolInput): Promise<MaybeProcessMemoryResult>;
 }
+/** How many project stores are currently held open. */
+export declare function openStoreCacheStats(): {
+    openStores: number;
+};
 export declare function createPeonTools(options?: CreatePeonToolsOptions): PeonTools;

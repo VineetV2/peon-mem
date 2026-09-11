@@ -164,9 +164,13 @@ export declare class PeonMemoryStore {
      * No-op when embeddings are unavailable. supersededBy links to a merged-away id
      * are re-pointed at the surviving record so history stays intact.
      */
-    mergeSimilarActiveRecords(records: MemoryRecord[], threshold?: number): Promise<{
+    mergeSimilarActiveRecords(records: MemoryRecord[], threshold?: number, options?: {
+        maxActive?: number;
+        exhaustive?: boolean;
+    }): Promise<{
         records: MemoryRecord[];
         merged: number;
+        comparisons: number;
     }>;
     readProcessingState(): Promise<ProcessingState>;
     writeProcessingState(state: ProcessingState): Promise<void>;

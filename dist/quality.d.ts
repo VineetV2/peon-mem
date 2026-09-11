@@ -77,7 +77,23 @@ export interface SerializedMemoryQualityReport {
     audit: MemoryQualityAuditSummary;
 }
 export declare function deduplicateMemoryRecords(records: MemoryRecord[]): DeduplicateMemoryRecordsResult;
-export declare function detectMemoryConflicts(records: MemoryRecord[]): MemoryConflict[];
+export interface DetectConflictOptions {
+    /** Compare every pair (the original scan). Kept for equivalence testing. */
+    exhaustive?: boolean;
+    /** Override the ubiquitous-entity bucket cap (default MAX_ENTITY_BUCKET). */
+    maxEntityBucket?: number;
+}
+/** How many record pairs the last scan actually string-compared. */
+export declare function conflictScanStats(): {
+    pairsEvaluated: number;
+};
+/**
+ * Conflicts require a shared entity, so only pairs that co-occur in some entity's
+ * bucket can ever qualify. Indexing by entity skips the overwhelming majority of
+ * pairs without touching a string; everything derived per record (normalized text,
+ * token sets, entity maps) is computed once instead of once per pair.
+ */
+export declare function detectMemoryConflicts(records: MemoryRecord[], options?: DetectConflictOptions): MemoryConflict[];
 export declare function markStaleMemoryRecords(records: MemoryRecord[], options?: StaleMemoryOptions): MarkStaleMemoryRecordsResult;
 export declare function promoteMemoryRecords(records: MemoryRecord[], options?: PromoteMemoryRecordsOptions): PromoteMemoryRecordsResult;
 export declare function applyMemoryQualityReport(records: MemoryRecord[], report: MemoryQualityReport): ApplyMemoryQualityReportResult;

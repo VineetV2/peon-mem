@@ -1,3 +1,4 @@
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 /**
  * Builds the LLM summarizer the brain uses to compress a topic cluster into one
  * gist belief. Kept separate from brain.ts so the curation logic stays pure and
@@ -5,7 +6,7 @@
  * or no key is configured (the brain then runs cost-free, skipping compression).
  */
 export function createClusterSummarizer(config) {
-    if (config.aiMode === "off" || !config.openRouterApiKey)
+    if (!llmEnabled(config))
         return null;
     return async (cluster) => {
         const beliefs = cluster.members.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
@@ -14,9 +15,9 @@ export function createClusterSummarizer(config) {
             "Losing a specific fact is a failure; merge wording, never drop information. Drop only redundancy and filler. " +
             "Output ONLY the summary sentence(s) — no preamble, no markdown, no quotes around it. Max 240 characters.";
         const user = `Topic: ${cluster.entity}\n\nBeliefs to compress:\n${beliefs}\n\nOne compact summary:`;
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch(llmEndpoint(config), {
             method: "POST",
-            headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+            headers: llmHeaders(config),
             body: JSON.stringify({
                 model: config.processingModel,
                 messages: [

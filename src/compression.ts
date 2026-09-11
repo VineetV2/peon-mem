@@ -1,4 +1,5 @@
 import type { PeonConfig } from "./config.js";
+import { llmEnabled, llmEndpoint, llmHeaders } from "./config.js";
 import type { Summarizer, TopicCluster } from "./brain.js";
 
 /**
@@ -8,7 +9,7 @@ import type { Summarizer, TopicCluster } from "./brain.js";
  * or no key is configured (the brain then runs cost-free, skipping compression).
  */
 export function createClusterSummarizer(config: PeonConfig): Summarizer | null {
-  if (config.aiMode === "off" || !config.openRouterApiKey) return null;
+  if (!llmEnabled(config)) return null;
   return async (cluster: TopicCluster): Promise<string> => {
     const beliefs = cluster.members.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
     const system =
@@ -17,9 +18,9 @@ export function createClusterSummarizer(config: PeonConfig): Summarizer | null {
       "Losing a specific fact is a failure; merge wording, never drop information. Drop only redundancy and filler. " +
       "Output ONLY the summary sentence(s) — no preamble, no markdown, no quotes around it. Max 240 characters.";
     const user = `Topic: ${cluster.entity}\n\nBeliefs to compress:\n${beliefs}\n\nOne compact summary:`;
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch(llmEndpoint(config), {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.openRouterApiKey}`, "Content-Type": "application/json" },
+      headers: llmHeaders(config),
       body: JSON.stringify({
         model: config.processingModel,
         messages: [

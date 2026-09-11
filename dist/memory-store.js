@@ -33,6 +33,78 @@ async function atomicWrite(path, content) {
     await writeFile(tmp, content, "utf8");
     await rename(tmp, path);
 }
+/**
+ * Ceiling on how many active records the O(n^2) semantic dedup pass will consider.
+ * Override with PEON_DEDUP_MAX_ACTIVE. Set generously enough that ordinary project
+ * brains still dedup, low enough that a very large brain can't stall the daemon.
+ */
+const DEDUP_MAX_ACTIVE = Number(process.env.PEON_DEDUP_MAX_ACTIVE) > 0
+    ? Number(process.env.PEON_DEDUP_MAX_ACTIVE)
+    : 25_000;
+/**
+ * Deterministic random projections for LSH bucketing of dedup candidates.
+ * Seeded so bucketing is reproducible across runs and tests.
+ */
+const DEDUP_BANDS = 8;
+const DEDUP_BITS_PER_BAND = 6;
+/** Yield to the event loop every N records so a long pass can't starve the daemon. */
+const DEDUP_YIELD_EVERY = 200;
+/**
+ * Hard ceiling on candidates examined per record. Bucketing alone only buys a
+ * constant factor when vectors are correlated (buckets fill unevenly), leaving the
+ * pass quadratic. Capping candidates makes the work O(n * k) — genuinely linear in
+ * brain size — at the cost of occasionally missing a merge in a very crowded bucket.
+ * A missed merge leaves a near-duplicate belief; an uncapped pass hangs the daemon.
+ */
+const DEDUP_MAX_CANDIDATES = 128;
+const projectionCache = new Map();
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+function projectionsFor(dim) {
+    const cached = projectionCache.get(dim);
+    if (cached)
+        return cached;
+    const rand = mulberry32(0x9e3779b9 ^ dim);
+    const planes = [];
+    for (let p = 0; p < DEDUP_BANDS * DEDUP_BITS_PER_BAND; p += 1) {
+        const plane = new Float32Array(dim);
+        for (let d = 0; d < dim; d += 1)
+            plane[d] = rand() * 2 - 1;
+        planes.push(plane);
+    }
+    projectionCache.set(dim, planes);
+    return planes;
+}
+/**
+ * Band keys for a vector: sign bits of random-hyperplane projections, grouped into
+ * bands. Two vectors with high cosine similarity agree on most bits, so they collide
+ * in at least one band with high probability — letting dedup compare a handful of
+ * plausible candidates instead of every record seen so far.
+ */
+function bandKeys(vector) {
+    const dim = vector.length;
+    const planes = projectionsFor(dim);
+    const keys = [];
+    for (let band = 0; band < DEDUP_BANDS; band += 1) {
+        let bits = "";
+        for (let b = 0; b < DEDUP_BITS_PER_BAND; b += 1) {
+            const plane = planes[band * DEDUP_BITS_PER_BAND + b];
+            let dot = 0;
+            for (let d = 0; d < dim; d += 1)
+                dot += vector[d] * plane[d];
+            bits += dot >= 0 ? "1" : "0";
+        }
+        keys.push(`${band}:${bits}`);
+    }
+    return keys;
+}
 export class PeonMemoryStore {
     projectPath;
     memoryDir;
@@ -612,18 +684,29 @@ export class PeonMemoryStore {
      * No-op when embeddings are unavailable. supersededBy links to a merged-away id
      * are re-pointed at the surviving record so history stays intact.
      */
-    async mergeSimilarActiveRecords(records, threshold = 0.9) {
+    async mergeSimilarActiveRecords(records, threshold = 0.9, options = {}) {
         if (!this.embeddingClient || !this.embeddingStore)
-            return { records, merged: 0 };
+            return { records, merged: 0, comparisons: 0 };
+        // SCALE GUARD. The pass below is O(n^2) pairwise cosine over 1536-dim vectors.
+        // On a 30k-record brain (~6.4k active) that is ~20.5M comparisons / ~31.6B float
+        // ops on the main thread, plus every vector resident as float64 — measured at
+        // 99% CPU and >1.9 GB RSS, which wedged the daemon's event loop entirely.
+        // Above the threshold we skip dedup rather than take the daemon down: a brain
+        // that keeps a few near-duplicates is strictly better than a brain that hangs.
+        // Checked BEFORE sync() so the vector sidecar is never even loaded.
+        const activeCount = records.reduce((n, r) => (r.status === "active" ? n + 1 : n), 0);
+        if (activeCount > (options.maxActive ?? DEDUP_MAX_ACTIVE)) {
+            return { records, merged: 0, comparisons: 0 };
+        }
         let vectorById;
         try {
             vectorById = (await this.embeddingStore.sync(records, this.embeddingClient)).vectorById;
         }
         catch {
-            return { records, merged: 0 };
+            return { records, merged: 0, comparisons: 0 };
         }
         if (vectorById.size === 0)
-            return { records, merged: 0 };
+            return { records, merged: 0, comparisons: 0 };
         const active = records.filter((record) => record.status === "active");
         const passthrough = records.filter((record) => record.status !== "active");
         const kept = [];
@@ -631,22 +714,81 @@ export class PeonMemoryStore {
         const remap = new Map();
         const mergeNow = new Date().toISOString();
         let merged = 0;
+        // Candidate index: band key -> indices into kept[]. Lets each record compare
+        // against a few plausible near-duplicates instead of every record so far,
+        // turning the old O(n^2) scan into roughly linear work.
+        const buckets = new Map();
+        const indexKept = (index, vector, type) => {
+            if (!vector)
+                return;
+            for (const key of bandKeys(vector)) {
+                const full = `${type}|${key}`;
+                const list = buckets.get(full);
+                if (list)
+                    list.push(index);
+                else
+                    buckets.set(full, [index]);
+            }
+        };
+        let comparisons = 0;
+        let processed = 0;
         for (const record of active) {
+            // Long passes must never starve the daemon's event loop the way the old
+            // fully synchronous scan did.
+            processed += 1;
+            if (processed % DEDUP_YIELD_EVERY === 0)
+                await new Promise((resolve) => setImmediate(resolve));
             const vec = vectorById.get(record.id);
             let matchIndex = -1;
             if (vec) {
-                for (let i = 0; i < kept.length; i += 1) {
-                    if (kept[i].type !== record.type)
-                        continue;
-                    const other = vectorById.get(kept[i].id);
-                    if (other && cosineSimilarity(vec, other) >= threshold) {
-                        matchIndex = i;
-                        break;
+                if (options.exhaustive) {
+                    for (let i = 0; i < kept.length; i += 1) {
+                        if (kept[i].type !== record.type)
+                            continue;
+                        const other = vectorById.get(kept[i].id);
+                        if (!other)
+                            continue;
+                        comparisons += 1;
+                        if (cosineSimilarity(vec, other) >= threshold) {
+                            matchIndex = i;
+                            break;
+                        }
+                    }
+                }
+                else {
+                    const seen = new Set();
+                    let examined = 0;
+                    for (const key of bandKeys(vec)) {
+                        const candidates = buckets.get(`${record.type}|${key}`);
+                        if (!candidates)
+                            continue;
+                        // Most recent entries first: a near-duplicate is likeliest among
+                        // recently-seen beliefs, so a capped scan still finds the common case.
+                        for (let c = candidates.length - 1; c >= 0; c -= 1) {
+                            if (examined >= DEDUP_MAX_CANDIDATES)
+                                break;
+                            const i = candidates[c];
+                            if (seen.has(i))
+                                continue;
+                            seen.add(i);
+                            const other = vectorById.get(kept[i].id);
+                            if (!other)
+                                continue;
+                            examined += 1;
+                            comparisons += 1;
+                            if (cosineSimilarity(vec, other) >= threshold) {
+                                matchIndex = i;
+                                break;
+                            }
+                        }
+                        if (matchIndex !== -1 || examined >= DEDUP_MAX_CANDIDATES)
+                            break;
                     }
                 }
             }
             if (matchIndex === -1) {
                 kept.push(record);
+                indexKept(kept.length - 1, vec, record.type);
                 continue;
             }
             const other = kept[matchIndex];
@@ -661,6 +803,10 @@ export class PeonMemoryStore {
                 entities: unique([...record.entities, ...other.entities]),
                 updatedAt: record.updatedAt > other.updatedAt ? record.updatedAt : other.updatedAt
             };
+            // The survivor can be the incoming record, so make its vector findable at
+            // that slot too — otherwise later near-duplicates could miss the bucket.
+            if (canonical.id === record.id)
+                indexKept(matchIndex, vec, record.type);
             remap.set(loser.id, canonical.id);
             // Recoverable-loser rule: don't destroy the merged-away belief — retire it as superseded,
             // linked to the survivor. It leaves active recall but its content stays recoverable and
@@ -682,7 +828,7 @@ export class PeonMemoryStore {
         const fixed = [...passthrough, ...retired].map((record) => record.supersededBy && remap.has(record.supersededBy)
             ? { ...record, supersededBy: resolveRemap(record.supersededBy) }
             : record);
-        return { records: [...kept, ...fixed], merged };
+        return { records: [...kept, ...fixed], merged, comparisons };
     }
     async readProcessingState() {
         const raw = await readFile(join(this.memoryDir, "brain", "processing-state.json"), "utf8").catch(() => "");
