@@ -48,6 +48,13 @@
   says how: a model with `PARAMETER num_ctx 32768`, or `OLLAMA_CONTEXT_LENGTH`.
   Verified against Ollama: `qwen2.5:7b` (4k) reported 4,096 of ~18,384 tokens and was
   refused; the same input on a 32k-context build was accepted.
+- The size estimate behind that check is script-aware. chars/4 undercounts CJK, so a
+  truncated Chinese/Japanese/Korean prompt looked whole: a 12k-character CJK log capped
+  at 4,096 read as 4,096 of ~4,500 and was accepted. Han, kana and hangul now count
+  0.75 tokens per character and other non-ASCII 0.35; ASCII stays at chars/4, so
+  English is unchanged (+0.07% on a real log). The weights stay under 2x the most
+  efficient known tokenizer rates, so untruncated CJK (0.45 tokens/char) and Cyrillic
+  (0.22) prompts on hosted models are not refused.
 
 ## 1.0.7
 

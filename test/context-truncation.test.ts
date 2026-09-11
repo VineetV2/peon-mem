@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { PeonMemoryStore } from "../src/memory-store.js";
-import { OpenRouterMemoryModelClient, PeonMemoryProcessor, detectPromptTruncation } from "../src/processor.js";
+import {
+  OpenRouterMemoryModelClient,
+  PeonMemoryProcessor,
+  detectPromptTruncation,
+  estimatePromptTokensForTruncation
+} from "../src/processor.js";
 import { loadPeonConfig } from "../src/config.js";
 
 /**
@@ -112,5 +117,128 @@ describe("consolidation refuses a truncated prompt", () => {
     // The cursor must not move past data that was never actually consolidated.
     const after = (await (await PeonMemoryStore.open({ projectPath })).readProcessingState()).lastProcessedEventId;
     expect(after).toBe(before);
+  });
+});
+
+// ── Token-dense scripts ──────────────────────────────────────────────────────────────
+// chars/4 fits English but undercounts CJK badly (~0.45-1.0 tokens per character, not
+// 0.25), so a truncated CJK-heavy prompt looked untruncated. The detector now uses a
+// script-aware estimate. It must also not over-count alphabetic non-Latin scripts, which
+// modern tokenizers pack tightly: a false positive blocks consolidation forever.
+
+const CJK_TEXT = "记忆整合在本地模型上运行会话日志不会丢失"; // 20 Han characters, no punctuation
+const CYRILLIC_TEXT = "Памятьконсолидируетсялокальноймоделью"; // 37 Cyrillic letters
+const DENSE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/** English as the real consolidation prompt measures it: ~5.5 chars per token. */
+const ENGLISH_CHARS_PER_TOKEN = 5.5;
+
+/**
+ * A model server that tokenizes what it receives at fixed per-script rates and, like
+ * Ollama, silently keeps only the last `window` tokens. usage.prompt_tokens is what it read.
+ */
+function stubTokenizingServer(window: number, rates: { dense: number; other: number }) {
+  const fetchMock = vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+    const { messages } = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
+    let tokens = 0;
+    for (const ch of messages.map((m) => m.content).join("")) {
+      const cp = ch.codePointAt(0) ?? 0;
+      tokens += cp < 0x80 ? 1 / ENGLISH_CHARS_PER_TOKEN : DENSE.test(ch) ? rates.dense : rates.other;
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: '{"summary":"ok","decisions":[]}' } }],
+        usage: { prompt_tokens: Math.min(window, Math.round(tokens)), completion_tokens: 12 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("estimatePromptTokensForTruncation", () => {
+  test("ASCII is chars/4, so English detection is unchanged", () => {
+    expect(estimatePromptTokensForTruncation("x".repeat(4001))).toBe(1001);
+  });
+
+  test("CJK ideographs, kana, hangul and CJK punctuation count 0.75 each", () => {
+    expect(estimatePromptTokensForTruncation("中".repeat(1000))).toBe(750);
+    expect(estimatePromptTokensForTruncation("あ".repeat(1000))).toBe(750);
+    expect(estimatePromptTokensForTruncation("カ".repeat(1000))).toBe(750);
+    expect(estimatePromptTokensForTruncation("한".repeat(1000))).toBe(750);
+    expect(estimatePromptTokensForTruncation("。".repeat(1000))).toBe(750);
+  });
+
+  test("other non-ASCII (Cyrillic, Greek, accented Latin) counts 0.35 each", () => {
+    expect(estimatePromptTokensForTruncation("я".repeat(1000))).toBe(350);
+    expect(estimatePromptTokensForTruncation("λ".repeat(1000))).toBe(350);
+    expect(estimatePromptTokensForTruncation("é".repeat(1000))).toBe(350);
+  });
+
+  test("counts code points, not UTF-16 units (astral CJK is one character)", () => {
+    const astral = "\u{20000}".repeat(4); // CJK Extension B: 4 characters, 8 UTF-16 units
+    expect(astral.length).toBe(8);
+    expect(estimatePromptTokensForTruncation(astral)).toBe(3);
+  });
+});
+
+describe("truncation detection on token-dense scripts", () => {
+  const systemPrompt = "x".repeat(6000); // ~1,500 estimated, ~1,091 real at 5.5 chars/token
+  const systemReal = 6000 / ENGLISH_CHARS_PER_TOKEN;
+
+  test("a CJK-heavy prompt truncated to 4096 is detected (chars/4 missed it)", () => {
+    const delta = CJK_TEXT.repeat(600); // 12,000 characters, the reviewer's example
+    const charsOverFour = Math.ceil(systemPrompt.length / 4) + Math.ceil(delta.length / 4);
+    expect(charsOverFour).toBe(4500);
+    expect(detectPromptTruncation(charsOverFour, 4096)).toBe(false); // the gap being fixed
+
+    const estimate = estimatePromptTokensForTruncation(systemPrompt) + estimatePromptTokensForTruncation(delta);
+    expect(estimate).toBe(10500);
+    expect(detectPromptTruncation(estimate, 4096)).toBe(true);
+  });
+
+  test.each([0.45, 0.5, 0.6])(
+    "an untruncated pure-CJK prompt at %s tokens/char (efficient tokenizer) is not flagged",
+    (tokensPerChar) => {
+      const delta = CJK_TEXT.repeat(2500); // 50,000 characters
+      const estimate = estimatePromptTokensForTruncation(systemPrompt) + estimatePromptTokensForTruncation(delta);
+      const reported = Math.round(systemReal + tokensPerChar * delta.length);
+      expect(reported / estimate).toBeGreaterThan(0.5);
+      expect(detectPromptTruncation(estimate, reported)).toBe(false);
+    }
+  );
+
+  test("an untruncated Cyrillic prompt at 0.22 tokens/char is not flagged", () => {
+    // At a flat 0.75 per non-ASCII character this would read ~0.31 and be blocked forever.
+    const delta = CYRILLIC_TEXT.repeat(1352); // ~50,000 characters
+    const estimate = estimatePromptTokensForTruncation(systemPrompt) + estimatePromptTokensForTruncation(delta);
+    const reported = Math.round(systemReal + 0.22 * delta.length);
+    expect(reported / estimate).toBeGreaterThan(0.5);
+    expect(detectPromptTruncation(estimate, reported)).toBe(false);
+  });
+});
+
+describe("the model client uses the script-aware estimate", () => {
+  test("refuses a CJK session log that a 4096-token Ollama window truncated", async () => {
+    stubTokenizingServer(4096, { dense: 0.65, other: 0.3 }); // Qwen2.5-like rates
+    const client = new OpenRouterMemoryModelClient();
+    await expect(
+      client.processMemory({ rawMemory: CJK_TEXT.repeat(600), config: ollamaConfig(), reason: "test" })
+    ).rejects.toThrow(/truncated[\s\S]*num_ctx/i);
+  });
+
+  test("accepts the same CJK log when the window is large enough, even on an efficient tokenizer", async () => {
+    stubTokenizingServer(131072, { dense: 0.45, other: 0.22 });
+    const client = new OpenRouterMemoryModelClient();
+    const res = await client.processMemory({ rawMemory: CJK_TEXT.repeat(2500), config: ollamaConfig(), reason: "test" });
+    expect(res.content).toContain("summary");
+  });
+
+  test("accepts an untruncated Cyrillic log on an efficient tokenizer", async () => {
+    stubTokenizingServer(131072, { dense: 0.45, other: 0.22 });
+    const client = new OpenRouterMemoryModelClient();
+    const res = await client.processMemory({ rawMemory: CYRILLIC_TEXT.repeat(1352), config: ollamaConfig(), reason: "test" });
+    expect(res.content).toContain("summary");
   });
 });
