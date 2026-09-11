@@ -27,6 +27,8 @@ export interface PeonConfig {
   /** How long a prompt waits for its query embedding before ranking lexically
    *  (PEON_QUERY_EMBED_TIMEOUT_MS). */
   queryEmbedTimeoutMs?: number;
+  /** Deadline for one embedding request to the embedding server (PEON_EMBED_TIMEOUT_MS). */
+  embedTimeoutMs?: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -102,7 +104,8 @@ export function loadPeonConfig(env: Env = process.env): PeonConfig {
     consolidationConcurrency: optional(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY)
       ? numberFromEnv(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY, 1)
       : undefined,
-    queryEmbedTimeoutMs: numberFromEnv(mergedEnv.PEON_QUERY_EMBED_TIMEOUT_MS, 2_000)
+    queryEmbedTimeoutMs: numberFromEnv(mergedEnv.PEON_QUERY_EMBED_TIMEOUT_MS, 2_000),
+    embedTimeoutMs: numberFromEnv(mergedEnv.PEON_EMBED_TIMEOUT_MS, 90_000)
   };
 }
 

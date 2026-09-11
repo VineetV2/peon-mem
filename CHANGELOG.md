@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed — a wedged connection no longer stalls consolidation for 5 minutes
+
+- Measured live: Ollama answered a 64-text embedding batch in seconds, but its ~310 KB
+  reply sat in the server's TCP send queue on that one keep-alive connection and never
+  arrived, while a fresh connection carried the same payload in 3.3 s. Node's fetch waits
+  300 s for headers, so each such request froze the consolidation's write phase for five
+  minutes, sometimes several times per run. Embedding requests now have a deadline
+  (`PEON_EMBED_TIMEOUT_MS`, default 90 s, covering the body too) and retry once with
+  `Connection: close`, so the retry cannot reuse the wedged socket. HTTP errors are not
+  retried.
+
 ### Added — consolidation phase tracing
 
 - A consolidation that stalls now says where. Any phase over 10 s is logged to the

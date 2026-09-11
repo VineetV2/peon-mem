@@ -307,6 +307,7 @@ launchctl unload ~/Library/LaunchAgents/com.peon.daemon.plist
 | `PEON_CONSOLIDATION_CONCURRENCY` | `1` local, `2` hosted | consolidations allowed at once across projects |
 | `PEON_LLM_TIMEOUT_MS` | `600000` | deadline for one consolidation request |
 | `PEON_QUERY_EMBED_TIMEOUT_MS` | `2000` | how long a prompt waits for its query embedding before ranking lexically |
+| `PEON_EMBED_TIMEOUT_MS` | `90000` | deadline for one embedding request (retried once on a fresh connection) |
 | `PEON_DISABLED` | — | hard off-switch for A/B testing |
 
 ## Project brains
