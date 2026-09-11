@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadPeonConfig, type PeonConfig } from "./config.js";
 import { EmbeddingStore } from "./embedding-store.js";
-import { cosineSimilarity, createEmbeddingClient, type EmbeddingClient, type EmbeddingVector } from "./embeddings.js";
+import { cosineSimilarity, createEmbeddingClient, type EmbeddingClient, type EmbeddingVector, embedQueryWithin, DEFAULT_QUERY_EMBED_TIMEOUT_MS } from "./embeddings.js";
 import type { MemoryQualityReport } from "./quality.js";
 import { applyDelete, applyMerge, applyPin, applyUpdate, type MemoryPatch } from "./memory-mutations.js";
 import { runSleepCycle, type BrainAction, type Summarizer } from "./brain.js";
@@ -170,7 +170,8 @@ export class PeonMemoryStore {
   private constructor(
     private readonly projectPath: string,
     private readonly memoryDir: string,
-    private readonly embeddingClient: EmbeddingClient | null
+    private readonly embeddingClient: EmbeddingClient | null,
+    private readonly queryEmbedTimeoutMs: number = DEFAULT_QUERY_EMBED_TIMEOUT_MS
   ) {}
 
   static async open(options: OpenMemoryStoreOptions): Promise<PeonMemoryStore> {
@@ -183,7 +184,12 @@ export class PeonMemoryStore {
     const memoryDir = join(options.projectPath, options.memoryDirName ?? config.memoryDirName ?? ".peon");
     const embeddingClient =
       options.embeddingClient !== undefined ? options.embeddingClient : createEmbeddingClient({ config });
-    const store = new PeonMemoryStore(options.projectPath, memoryDir, embeddingClient);
+    const store = new PeonMemoryStore(
+      options.projectPath,
+      memoryDir,
+      embeddingClient,
+      config.queryEmbedTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS
+    );
     await store.ensureLayout();
     store.embeddingStore = await EmbeddingStore.open(memoryDir);
     return store;
@@ -642,7 +648,7 @@ export class PeonMemoryStore {
         const vectorById = await this.embeddingStore.vectorById();
         let queryVector = options.queryVector;
         if ((!queryVector || queryVector.length === 0) && this.embeddingClient) {
-          [queryVector] = await this.embeddingClient.embed([query]);
+          queryVector = await embedQueryWithin(this.embeddingClient, query, this.queryEmbedTimeoutMs);
         }
         if (queryVector && queryVector.length > 0 && vectorById.size > 0) {
           semantic = { queryVector, vectorById };
@@ -671,8 +677,9 @@ export class PeonMemoryStore {
       // mutation; records added since the last write degrade to lexical until the next consolidation.
       const vectorById = await this.embeddingStore.vectorById();
       if (vectorById.size === 0) return undefined;
-      const [queryVector] = await this.embeddingClient.embed([query]);
-      if (!queryVector || queryVector.length === 0) return undefined;
+      // Bounded: a busy embedding server must not hold the prompt (lexical-only past the deadline).
+      const queryVector = await embedQueryWithin(this.embeddingClient, query, this.queryEmbedTimeoutMs);
+      if (!queryVector) return undefined;
       return { queryVector, vectorById };
     } catch {
       // Embedding failures degrade gracefully to lexical-only retrieval.
@@ -718,7 +725,7 @@ export class PeonMemoryStore {
     // never parses — so the batch failed and (correctly, cursor unmoved) retried the SAME oversized
     // delta forever: a permanent stall. Consume a bounded chunk, advance the cursor only to the last
     // INCLUDED event, and let the next trigger drain the rest.
-    const cap = maxChars ?? (Number(process.env.PEON_CONSOLIDATION_MAX_DELTA_CHARS) || 60000);
+    const cap = maxChars ?? defaultMaxDeltaChars();
     const [messages, events] = await Promise.all([
       this.readJsonl("raw/messages.jsonl"),
       this.readJsonl("raw/events.jsonl")
@@ -1497,4 +1504,9 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+/** The configured consolidation chunk size (PEON_CONSOLIDATION_MAX_DELTA_CHARS, default 60k chars). */
+export function defaultMaxDeltaChars(): number {
+  return Number(process.env.PEON_CONSOLIDATION_MAX_DELTA_CHARS) || 60000;
 }

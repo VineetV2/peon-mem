@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { PeonMemoryStore } from "./memory-store.js";
+import { PeonMemoryStore, defaultMaxDeltaChars } from "./memory-store.js";
 import { llmEnabled, loadPeonConfig, type PeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
 import { extractDomainEntitiesViaModel } from "./entity-extraction.js";
@@ -78,6 +78,33 @@ export type MaybeProcessMemoryResult =
 export interface PeonMemoryProcessorOptions {
   config?: PeonConfig;
   modelClient?: MemoryModelClient;
+}
+
+/** The model server took too long for this request. A smaller chunk may fit. */
+export class ModelTimeoutError extends Error {
+  override name = "ModelTimeoutError";
+}
+
+/** The model server's context window cut the prompt. A smaller chunk may fit. */
+export class PromptTruncatedError extends Error {
+  override name = "PromptTruncatedError";
+}
+
+// ── Adaptive chunk size ───────────────────────────────────────────────────────────────
+// A chunk too big for the model setup (too slow for the time limit, or longer than the
+// context window) failed at the same size on every retry: consolidation stalled for good.
+// Halve it after such a failure, down to a floor, and grow it back 25% per success.
+const MIN_ADAPTIVE_DELTA_CHARS = 8_000;
+
+function shrunkDeltaCap(current: number): number {
+  return Math.max(MIN_ADAPTIVE_DELTA_CHARS, Math.floor(current / 2));
+}
+
+/** The next cap after a success; undefined once it is back to the configured size. */
+function grownDeltaCap(current: number | undefined): number | undefined {
+  if (current === undefined) return undefined;
+  const next = Math.floor(current * 1.25);
+  return next >= defaultMaxDeltaChars() ? undefined : next;
 }
 
 // ── Consolidation scheduling ─────────────────────────────────────────────────────────
@@ -170,7 +197,11 @@ export class PeonMemoryProcessor {
     });
     const priorState = await store.readProcessingState();
     // Consolidate only NEW experience (the delta), aware of EXISTING beliefs.
-    const { text: deltaMemory, lastEventId, capped } = await store.readRawMemoryDelta(priorState.lastProcessedEventId);
+    const deltaCap = priorState.adaptiveMaxDeltaChars; // undefined = the configured size
+    const { text: deltaMemory, lastEventId, capped } = await store.readRawMemoryDelta(
+      priorState.lastProcessedEventId,
+      deltaCap
+    );
     const existingMemory = formatExistingMemory(await store.listMemoryRecords());
     const fullRawChars = (await store.readRawMemory(Number.MAX_SAFE_INTEGER)).length;
     const reason = input.reason ?? "manual";
@@ -181,7 +212,18 @@ export class PeonMemoryProcessor {
           model: "manual-ai-result",
           estimatedTokens: 0
         }
-      : await this.modelClient.processMemory({ rawMemory: deltaMemory, existingMemory, config: this.config, reason });
+      : await this.modelClient
+          .processMemory({ rawMemory: deltaMemory, existingMemory, config: this.config, reason })
+          .catch(async (error: unknown) => {
+            if (error instanceof ModelTimeoutError || error instanceof PromptTruncatedError) {
+              const current = deltaCap ?? defaultMaxDeltaChars();
+              const next = shrunkDeltaCap(current);
+              if (next < current) {
+                await store.writeProcessingState({ ...(await store.readProcessingState()), adaptiveMaxDeltaChars: next });
+              }
+            }
+            throw error;
+          });
 
     const processed = parseProcessedMemory(modelResult.content);
     // Model-grade DOMAIN entity extraction (people/papers/methods/datasets) over the new beliefs —
@@ -230,6 +272,7 @@ export class PeonMemoryProcessor {
       lastProcessedRawChars: capped ? (priorState.lastProcessedRawChars ?? 0) : fullRawChars,
       lastRawChars: fullRawChars,
       lastProcessedEventId: lastEventId ?? priorState.lastProcessedEventId,
+      adaptiveMaxDeltaChars: grownDeltaCap(deltaCap),
       lastModel: modelResult.model,
       lastEstimatedTokens: modelResult.estimatedTokens,
       lastOperationsEmitted: stats.operationsEmitted,
@@ -439,7 +482,7 @@ export class OpenRouterMemoryModelClient implements MemoryModelClient {
       estimatePromptTokensForTruncation(systemPrompt) + estimatePromptTokensForTruncation(userPrompt);
     const reportedPromptTokens = json.usage?.prompt_tokens;
     if (detectPromptTruncation(estimatedPromptTokens, reportedPromptTokens)) {
-      throw new Error(
+      throw new PromptTruncatedError(
         `The model server truncated the consolidation prompt: it processed ${reportedPromptTokens} tokens ` +
           `of roughly ${estimatedPromptTokens} sent. Its context window is too small, so the instructions and ` +
           `schema were cut off and the result would be empty. The session log was NOT consumed and will be ` +
@@ -604,7 +647,10 @@ async function requestModel(config: PeonConfig, url: string, init: RequestInit):
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (error) {
-    throw new Error(describeModelRequestFailure(error, url, timeoutMs));
+    const message = describeModelRequestFailure(error, url, timeoutMs);
+    const code = (error as { cause?: { code?: string } }).cause?.code;
+    const timedOut = (error instanceof Error && error.name === "TimeoutError") || code === "UND_ERR_HEADERS_TIMEOUT";
+    throw timedOut ? new ModelTimeoutError(message) : new Error(message);
   }
 }
 

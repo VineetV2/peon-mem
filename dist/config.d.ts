@@ -20,6 +20,9 @@ export interface PeonConfig {
     /** Consolidations allowed at once across projects (PEON_CONSOLIDATION_CONCURRENCY);
      *  unset means 1 for a local provider, 2 for a hosted one. */
     consolidationConcurrency?: number;
+    /** How long a prompt waits for its query embedding before ranking lexically
+     *  (PEON_QUERY_EMBED_TIMEOUT_MS). */
+    queryEmbedTimeoutMs?: number;
 }
 type Env = Record<string, string | undefined>;
 export declare function loadPeonConfig(env?: Env): PeonConfig;

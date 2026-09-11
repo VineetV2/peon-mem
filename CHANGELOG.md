@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed — a busy model server no longer stalls every prompt
+
+- Every prompt embeds its query before ranking memory. With the embedder on a small home
+  server that is busy generating a consolidation, that took 26-40 s, and the prompt waited
+  the whole time before the agent started. The query embedding now has a deadline
+  (`PEON_QUERY_EMBED_TIMEOUT_MS`, default 2 s); past it, retrieval ranks lexically. A
+  request that misses the deadline still finishes and fills the query-embedding cache.
+  Measured live: the server took 14.4 s to embed while ranking returned in 2.1 s.
+
+### Fixed — consolidation can no longer stall on a chunk that is too big
+
+- A chunk that timed out (a slow local model) or overflowed the model's context window
+  was retried at the same size on every trigger, so consolidation stopped for good. It is
+  now halved for the next attempt, down to 8,000 chars, and grows back 25% per success
+  until it is at the configured `PEON_CONSOLIDATION_MAX_DELTA_CHARS` again.
+
 ### Fixed — consolidations no longer pile up
 
 - Each hook trigger (session end, turn end, subagent end) started its own consolidation,

@@ -34,6 +34,37 @@ export interface EmbeddingClient {
   embed(texts: string[]): Promise<EmbeddingVector[]>;
 }
 
+export const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 2_000;
+
+/**
+ * Embed a prompt's query, but never make the prompt wait longer than `timeoutMs`.
+ *
+ * Every prompt embeds its query before ranking. With the embedder on a small home server
+ * that is busy generating a consolidation, that took 26-40 s, and the prompt waited the
+ * whole time. Past the deadline, or on any failure, this returns undefined and retrieval
+ * ranks lexically. A request that misses the deadline keeps running, so a query-embedding
+ * cache still fills and the same query is instant next time.
+ */
+export async function embedQueryWithin(
+  client: EmbeddingClient,
+  query: string,
+  timeoutMs: number
+): Promise<EmbeddingVector | undefined> {
+  const request = client.embed([query]).then(
+    ([vector]) => (vector && vector.length > 0 ? vector : undefined),
+    () => undefined
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), timeoutMs);
+  });
+  try {
+    return await Promise.race([request, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Cosine similarity of two vectors. Returns 0 for empty/mismatched/zero vectors. */
 export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
   if (a.length === 0 || a.length !== b.length) return 0;

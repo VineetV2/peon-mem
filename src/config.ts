@@ -24,6 +24,9 @@ export interface PeonConfig {
   /** Consolidations allowed at once across projects (PEON_CONSOLIDATION_CONCURRENCY);
    *  unset means 1 for a local provider, 2 for a hosted one. */
   consolidationConcurrency?: number;
+  /** How long a prompt waits for its query embedding before ranking lexically
+   *  (PEON_QUERY_EMBED_TIMEOUT_MS). */
+  queryEmbedTimeoutMs?: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -98,7 +101,8 @@ export function loadPeonConfig(env: Env = process.env): PeonConfig {
     llmTimeoutMs: numberFromEnv(mergedEnv.PEON_LLM_TIMEOUT_MS, 600_000),
     consolidationConcurrency: optional(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY)
       ? numberFromEnv(mergedEnv.PEON_CONSOLIDATION_CONCURRENCY, 1)
-      : undefined
+      : undefined,
+    queryEmbedTimeoutMs: numberFromEnv(mergedEnv.PEON_QUERY_EMBED_TIMEOUT_MS, 2_000)
   };
 }
 
