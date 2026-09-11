@@ -94,10 +94,33 @@ export declare function parseProcessedMemory(content: string): ProcessedMemory;
  * OpenAI-compatible servers report usage.prompt_tokens: what the model actually read.
  * Ollama, at its 4096-token default, reports exactly 4096 for a ~17K-token prompt.
  *
- * The threshold has to respect how rough the estimate is. chars/4 OVER-estimates
- * English (real text runs ~5.5 chars/token), so an untruncated prompt still reports
- * only ~0.73 of the estimate. A truncated one reports ~0.24. Below 0.5 is unambiguous:
- * reaching it without truncation would take 8+ chars per token. Small prompts are
- * ignored, where estimation noise is a large share of the total.
+ * The estimate comes from estimatePromptTokensForTruncation, and the threshold has to
+ * respect how rough it is. For English that estimate is chars/4, which OVER-estimates
+ * (real text runs ~5.5 chars/token), so an untruncated prompt still reports ~0.73 of
+ * it. A truncated one reports ~0.24. Below 0.5 is unambiguous: reaching it without
+ * truncation would take 8+ chars per token. Small prompts are ignored, where
+ * estimation noise is a large share of the total.
  */
 export declare function detectPromptTruncation(estimatedPromptTokens: number, reportedPromptTokens: number | undefined): boolean;
+/**
+ * Prompt size estimate for detectPromptTruncation ONLY. estimateTokens (chars/4) stays
+ * the cost/reporting estimate; this one exists because chars/4 undercounts token-dense
+ * scripts, which let a truncated CJK prompt pass as untruncated.
+ *
+ * The detector flags reported/estimated < 0.5, so each weight has to sit between two
+ * limits: high enough that a truncated prompt falls below 0.5, and at most ~2x the
+ * MOST efficient tokenizer's rate, or an untruncated prompt falls below 0.5 too. That
+ * false positive is the worse failure: the session is refused on every retry.
+ *
+ * - ASCII, 1/4 per char: unchanged, so English behaves exactly as before (chars/4
+ *   over-counts English ~1.4x; measured untruncated ratio 0.73, truncated 0.24).
+ * - Han, kana, hangul, bopomofo, CJK and fullwidth punctuation, 0.75 per char: efficient
+ *   tokenizers run ~0.45-0.6 tokens per CJK char, giving an untruncated ratio of 0.6-0.8.
+ *   Qwen2.5 on Ollama runs ~0.65, so a truncated CJK prompt now reads well under 0.5.
+ * - Any other non-ASCII, 0.35 per char: Cyrillic, Greek, Arabic, accented Latin and the
+ *   like pack into ~0.22-0.35 tokens per char on large-vocabulary tokenizers. A flat 0.75
+ *   here would read an untruncated Russian log at ~0.31 and block it forever.
+ *
+ * Iterates code points, so an astral character (CJK Extension B, emoji) counts once.
+ */
+export declare function estimatePromptTokensForTruncation(text: string): number;

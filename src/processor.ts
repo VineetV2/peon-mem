@@ -328,7 +328,8 @@ export class OpenRouterMemoryModelClient implements MemoryModelClient {
     // keeps only the TAIL and silently drops the rest — which is the system prompt and
     // the JSON schema. The model then answers without its instructions, and the result
     // is empty or wrong. Refuse it rather than mark the session as consolidated.
-    const estimatedPromptTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+    const estimatedPromptTokens =
+      estimatePromptTokensForTruncation(systemPrompt) + estimatePromptTokensForTruncation(userPrompt);
     const reportedPromptTokens = json.usage?.prompt_tokens;
     if (detectPromptTruncation(estimatedPromptTokens, reportedPromptTokens)) {
       throw new Error(
@@ -489,11 +490,12 @@ function estimateTokens(text: string): number {
  * OpenAI-compatible servers report usage.prompt_tokens: what the model actually read.
  * Ollama, at its 4096-token default, reports exactly 4096 for a ~17K-token prompt.
  *
- * The threshold has to respect how rough the estimate is. chars/4 OVER-estimates
- * English (real text runs ~5.5 chars/token), so an untruncated prompt still reports
- * only ~0.73 of the estimate. A truncated one reports ~0.24. Below 0.5 is unambiguous:
- * reaching it without truncation would take 8+ chars per token. Small prompts are
- * ignored, where estimation noise is a large share of the total.
+ * The estimate comes from estimatePromptTokensForTruncation, and the threshold has to
+ * respect how rough it is. For English that estimate is chars/4, which OVER-estimates
+ * (real text runs ~5.5 chars/token), so an untruncated prompt still reports ~0.73 of
+ * it. A truncated one reports ~0.24. Below 0.5 is unambiguous: reaching it without
+ * truncation would take 8+ chars per token. Small prompts are ignored, where
+ * estimation noise is a large share of the total.
  */
 export function detectPromptTruncation(
   estimatedPromptTokens: number,
@@ -502,6 +504,49 @@ export function detectPromptTruncation(
   if (!reportedPromptTokens || reportedPromptTokens <= 0) return false; // no usage reported: cannot tell
   if (estimatedPromptTokens - reportedPromptTokens < 1000) return false;
   return reportedPromptTokens / estimatedPromptTokens < 0.5;
+}
+
+/** Scripts that tokenize at roughly one token per character or more, not one per word. */
+const TOKEN_DENSE_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}\u3000-\u303F\uFF00-\uFFEF]/u;
+const TOKENS_PER_ASCII_CHAR = 1 / 4;
+const TOKENS_PER_DENSE_CHAR = 0.75;
+const TOKENS_PER_OTHER_CHAR = 0.35;
+
+/**
+ * Prompt size estimate for detectPromptTruncation ONLY. estimateTokens (chars/4) stays
+ * the cost/reporting estimate; this one exists because chars/4 undercounts token-dense
+ * scripts, which let a truncated CJK prompt pass as untruncated.
+ *
+ * The detector flags reported/estimated < 0.5, so each weight has to sit between two
+ * limits: high enough that a truncated prompt falls below 0.5, and at most ~2x the
+ * MOST efficient tokenizer's rate, or an untruncated prompt falls below 0.5 too. That
+ * false positive is the worse failure: the session is refused on every retry.
+ *
+ * - ASCII, 1/4 per char: unchanged, so English behaves exactly as before (chars/4
+ *   over-counts English ~1.4x; measured untruncated ratio 0.73, truncated 0.24).
+ * - Han, kana, hangul, bopomofo, CJK and fullwidth punctuation, 0.75 per char: efficient
+ *   tokenizers run ~0.45-0.6 tokens per CJK char, giving an untruncated ratio of 0.6-0.8.
+ *   Qwen2.5 on Ollama runs ~0.65, so a truncated CJK prompt now reads well under 0.5.
+ * - Any other non-ASCII, 0.35 per char: Cyrillic, Greek, Arabic, accented Latin and the
+ *   like pack into ~0.22-0.35 tokens per char on large-vocabulary tokenizers. A flat 0.75
+ *   here would read an untruncated Russian log at ~0.31 and block it forever.
+ *
+ * Iterates code points, so an astral character (CJK Extension B, emoji) counts once.
+ */
+export function estimatePromptTokensForTruncation(text: string): number {
+  // Count per class and multiply once: summing 0.35 thousands of times drifts past the
+  // integer and Math.ceil would round it up.
+  let ascii = 0;
+  let dense = 0;
+  let other = 0;
+  for (const char of text) {
+    if ((char.codePointAt(0) ?? 0) < 0x80) ascii += 1;
+    else if (TOKEN_DENSE_SCRIPT.test(char)) dense += 1;
+    else other += 1;
+  }
+  const tokens = ascii * TOKENS_PER_ASCII_CHAR + dense * TOKENS_PER_DENSE_CHAR + other * TOKENS_PER_OTHER_CHAR;
+  return Math.max(1, Math.ceil(tokens));
 }
 
 function estimateTokensByChars(chars: number): number {
