@@ -35,6 +35,7 @@ export interface EmbeddingClient {
 }
 
 export const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 2_000;
+export const DEFAULT_EMBED_TIMEOUT_MS = 90_000;
 
 /**
  * Embed a prompt's query, but never make the prompt wait longer than `timeoutMs`.
@@ -295,6 +296,8 @@ export interface OllamaEmbeddingClientOptions {
   model: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /** Deadline for one embedding request (PEON_EMBED_TIMEOUT_MS). */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -303,15 +306,61 @@ export interface OllamaEmbeddingClientOptions {
  * round-trip, zero API spend, fully offline. Model is part of the cache/sidecar hash,
  * so switching models auto-triggers document re-embeds through the existing sync path.
  */
+/** An HTTP error from the embedding server: a real answer, so it is not retried. */
+class EmbeddingHttpError extends Error {}
+
 export class OllamaEmbeddingClient implements EmbeddingClient {
   readonly model: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: OllamaEmbeddingClientOptions) {
     this.model = options.model;
     this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_EMBED_TIMEOUT_MS;
+  }
+
+  /**
+   * One embedding request, bounded, with one retry on a fresh connection.
+   *
+   * Measured live: Ollama answered a 64-text batch in seconds, but the ~310 KB response sat
+   * in the server's TCP send queue on that one keep-alive connection and never arrived, while
+   * a fresh connection carried the same payload in 3.3 s. Node's fetch waits 300 s for
+   * response headers, so every such request stalled a consolidation for five minutes. The
+   * deadline also covers reading the body. HTTP errors are real answers and are not retried.
+   */
+  private async fetchEmbeddings(input: string[]): Promise<{ embeddings?: number[][] }> {
+    const url = `${this.baseUrl}/api/embed`;
+    const body = JSON.stringify({ model: this.model, input });
+    const attempt = async (fresh: boolean) => {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (fresh) headers.connection = "close";
+      const response = await this.fetchImpl(url, { method: "POST", headers, body, signal: AbortSignal.timeout(this.requestTimeoutMs) });
+      if (!response.ok) {
+        const text = (await response.text?.().catch(() => "")) ?? "";
+        throw new EmbeddingHttpError(`Ollama embeddings failed with ${response.status}${text ? `: ${text}` : ""}`);
+      }
+      // Parsed under the same deadline, so a response that stalls mid-body is caught too.
+      return (await response.json()) as { embeddings?: number[][] };
+    };
+    try {
+      return await attempt(false);
+    } catch (first) {
+      if (first instanceof EmbeddingHttpError) throw first;
+      try {
+        return await attempt(true);
+      } catch (second) {
+        if (second instanceof EmbeddingHttpError) throw second;
+        const timedOut = [first, second].every((e) => e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"));
+        throw new Error(
+          timedOut
+            ? `Ollama embeddings did not answer within ${this.requestTimeoutMs / 1000} s, twice (PEON_EMBED_TIMEOUT_MS).`
+            : `Ollama embeddings request failed twice: ${second instanceof Error ? second.message : String(second)}`
+        );
+      }
+    }
   }
 
   async embed(texts: string[]): Promise<EmbeddingVector[]> {
@@ -327,16 +376,7 @@ export class OllamaEmbeddingClient implements EmbeddingClient {
     const vectors: EmbeddingVector[] = [];
     for (let start = 0; start < texts.length; start += CHUNK) {
       const slice = texts.slice(start, start + CHUNK);
-      const response = await this.fetchImpl(`${this.baseUrl}/api/embed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: slice })
-      });
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Ollama embeddings failed with ${response.status}${body ? `: ${body}` : ""}`);
-      }
-      const json = (await response.json()) as { embeddings?: number[][] };
+      const json = await this.fetchEmbeddings(slice);
       const data = json.embeddings ?? [];
       if (data.length !== slice.length) {
         throw new Error(`Ollama embeddings returned ${data.length} vectors for ${slice.length} inputs.`);
@@ -394,7 +434,8 @@ export class FallbackEmbeddingClient implements EmbeddingClient {
 export type EmbeddingMode = PeonConfig["embeddingMode"];
 
 export interface CreateEmbeddingClientOptions {
-  config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl">;
+  config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl"> &
+    Partial<Pick<PeonConfig, "embedTimeoutMs">>;
   onFallback?: (error: unknown) => void;
 }
 
@@ -490,7 +531,8 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions): Em
     // so a stopped Ollama service degrades instead of breaking retrieval.
     const ollama = new OllamaEmbeddingClient({
       model: config.embeddingModel ?? "nomic-embed-text",
-      baseUrl: config.ollamaBaseUrl
+      baseUrl: config.ollamaBaseUrl,
+      requestTimeoutMs: config.embedTimeoutMs
     });
     const fallback =
       config.openRouterApiKey && config.embeddingModel && config.embeddingModel.includes("/")

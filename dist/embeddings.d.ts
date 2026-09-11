@@ -23,6 +23,7 @@ export interface EmbeddingClient {
     embed(texts: string[]): Promise<EmbeddingVector[]>;
 }
 export declare const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 2000;
+export declare const DEFAULT_EMBED_TIMEOUT_MS = 90000;
 /**
  * Embed a prompt's query, but never make the prompt wait longer than `timeoutMs`.
  *
@@ -69,18 +70,25 @@ export interface OllamaEmbeddingClientOptions {
     model: string;
     baseUrl?: string;
     fetchImpl?: typeof fetch;
+    /** Deadline for one embedding request (PEON_EMBED_TIMEOUT_MS). */
+    requestTimeoutMs?: number;
 }
-/**
- * Local semantic embeddings via an Ollama server (default http://127.0.0.1:11434).
- * Same quality class as API embeddings but ~30ms on-machine instead of a ~1.3s remote
- * round-trip, zero API spend, fully offline. Model is part of the cache/sidecar hash,
- * so switching models auto-triggers document re-embeds through the existing sync path.
- */
 export declare class OllamaEmbeddingClient implements EmbeddingClient {
     readonly model: string;
     private readonly baseUrl;
     private readonly fetchImpl;
+    private readonly requestTimeoutMs;
     constructor(options: OllamaEmbeddingClientOptions);
+    /**
+     * One embedding request, bounded, with one retry on a fresh connection.
+     *
+     * Measured live: Ollama answered a 64-text batch in seconds, but the ~310 KB response sat
+     * in the server's TCP send queue on that one keep-alive connection and never arrived, while
+     * a fresh connection carried the same payload in 3.3 s. Node's fetch waits 300 s for
+     * response headers, so every such request stalled a consolidation for five minutes. The
+     * deadline also covers reading the body. HTTP errors are real answers and are not retried.
+     */
+    private fetchEmbeddings;
     embed(texts: string[]): Promise<EmbeddingVector[]>;
 }
 /**
@@ -106,7 +114,7 @@ export declare class FallbackEmbeddingClient implements EmbeddingClient {
 }
 export type EmbeddingMode = PeonConfig["embeddingMode"];
 export interface CreateEmbeddingClientOptions {
-    config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl">;
+    config: Pick<PeonConfig, "embeddingMode" | "embeddingModel" | "openRouterApiKey" | "ollamaBaseUrl" | "provider" | "llmApiKey" | "llmBaseUrl"> & Partial<Pick<PeonConfig, "embedTimeoutMs">>;
     onFallback?: (error: unknown) => void;
 }
 /** Build the embedding client implied by config, or null when embeddings are off. */
