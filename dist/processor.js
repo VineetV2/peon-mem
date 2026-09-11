@@ -1,5 +1,5 @@
 import { PeonMemoryStore } from "./memory-store.js";
-import { loadPeonConfig } from "./config.js";
+import { llmEnabled, loadPeonConfig } from "./config.js";
 import { createQualityReport } from "./quality.js";
 import { extractDomainEntitiesViaModel } from "./entity-extraction.js";
 export class PeonMemoryProcessor {
@@ -99,7 +99,9 @@ export class PeonMemoryProcessor {
             trigger: input.trigger,
             force: input.force ?? false,
             aiMode: this.config.aiMode,
-            hasApiKey: Boolean(this.config.openRouterApiKey),
+            // A local provider (Ollama) needs no key. Gating on openRouterApiKey here meant a
+            // fully-local setup skipped every automatic consolidation as "missing_api_key".
+            hasApiKey: llmEnabled(this.config),
             hasManualAiResult: Boolean(input.aiResult)
         });
         if (decision.action === "skip") {

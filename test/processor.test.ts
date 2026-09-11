@@ -372,3 +372,77 @@ async function readJsonl(path: string): Promise<Array<Record<string, unknown>>> 
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
+
+describe("automatic consolidation on a local provider", () => {
+  async function seededProject(): Promise<string> {
+    const projectPath = await mkdtemp(join(tmpdir(), "peon-auto-local-test-"));
+    const store = await PeonMemoryStore.open({ projectPath });
+    const session = await store.startSession({ client: "auto-test", cwd: projectPath });
+    await store.recordMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "Decision: consolidation runs on the local Ollama model, no hosted key. ".repeat(8)
+    });
+    await store.endSession({ sessionId: session.id });
+    return projectPath;
+  }
+
+  function countingClient(): { client: MemoryModelClient; calls: () => number } {
+    let calls = 0;
+    const client: MemoryModelClient = {
+      async processMemory() {
+        calls += 1;
+        return {
+          content: JSON.stringify({ summary: "Local consolidation ran.", decisions: ["Consolidate locally."] }),
+          model: "qwen2.5:7b-ctx32k",
+          estimatedTokens: 50
+        };
+      }
+    };
+    return { client, calls: () => calls };
+  }
+
+  test("Ollama with no API key still consolidates (was skipped forever as missing_api_key)", async () => {
+    const projectPath = await seededProject();
+    const { client, calls } = countingClient();
+    const processor = new PeonMemoryProcessor({
+      config: {
+        processingModel: "qwen2.5:7b-ctx32k",
+        memoryDirName: ".peon",
+        flushMinChars: 200,
+        aiMode: "gated",
+        provider: "ollama",
+        llmBaseUrl: "http://model-server.test:11434/v1"
+      },
+      modelClient: client
+    });
+
+    const result = await processor.maybeProcessMemory({ projectPath, trigger: "session_end" });
+
+    expect(result.decision.reason).not.toBe("missing_api_key");
+    expect(result.status).toBe("processed");
+    expect(calls()).toBe(1);
+  });
+
+  test("a hosted provider with no API key is still skipped", async () => {
+    const projectPath = await seededProject();
+    const { client, calls } = countingClient();
+    const processor = new PeonMemoryProcessor({
+      config: {
+        processingModel: "google/gemini-2.5-flash-lite",
+        memoryDirName: ".peon",
+        flushMinChars: 200,
+        aiMode: "gated",
+        provider: "openrouter",
+        llmBaseUrl: "https://openrouter.ai/api/v1"
+      },
+      modelClient: client
+    });
+
+    const result = await processor.maybeProcessMemory({ projectPath, trigger: "session_end", force: true });
+
+    expect(result.status).toBe("skipped");
+    expect(result.decision.reason).toBe("missing_api_key");
+    expect(calls()).toBe(0);
+  });
+});

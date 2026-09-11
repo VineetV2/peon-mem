@@ -30,6 +30,10 @@
   `llmEnabled` / `llmEndpoint` / `llmHeaders`.
 - Consolidation requests `response_format: json_object`. Local 7B models otherwise
   reply conversationally and every consolidation is lost to a parse error.
+- Automatic consolidation (session end, turn end, heartbeat, `maybe_process_memory`)
+  still gated on `openRouterApiKey`, so a fully-local setup skipped every run as
+  `missing_api_key`, even when forced, and the raw log grew unconsolidated. The gate
+  now uses `llmEnabled`. A hosted provider with no key is still skipped.
 
 ### Fixed — a too-small model context window no longer eats sessions silently
 
