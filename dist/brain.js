@@ -180,7 +180,8 @@ export async function compressTopicClusters(records, summarize, now, options = {
         if (!content)
             continue;
         const memberIds = cluster.members.map((m) => m.id);
-        const summaryId = options.makeId(cluster.entity);
+        // The id includes the summary text: a topic recompressed later must not reuse this id.
+        const summaryId = options.makeId(cluster.entity, content);
         const importance = Math.max(...cluster.members.map((m) => m.score.importance));
         const entities = Array.from(new Set(cluster.members.flatMap((m) => m.entities)));
         const summary = {

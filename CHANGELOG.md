@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed — brain pulses no longer grind on big brains
+
+- Topic compression derived a summary's id from its topic alone, so each recompression
+  reused the previous summary's id. A live 32k-memory brain carried 220 shared ids across
+  912 extra copies, and because the embedding sidecar keeps one hash per id, those 912
+  memories were re-embedded on every 3-minute pulse: 209-237 s of model-server time per
+  pulse with the brain's write lock held. Summary ids now include the summary text, and
+  every write gives records that share an id a unique one (the live copy keeps it; archived
+  members follow their summary), so existing brains heal on their next write.
+- Every pulse re-read, rewrote and snapshotted every brain even when nothing had changed.
+  A pass is now skipped when no memories were recalled, no compression was asked for, the
+  brain file is unchanged since the last pass, and the last pass was under an hour ago.
+- The global brain snapshotted on every pulse and never pruned: 24,037 files, 17 GB. It now
+  snapshots only when a pass writes, and keeps the newest 20. A backlog of more than 100
+  extra snapshots is reported, never deleted automatically.
+
 ### Fixed — requests to a local model server use a fresh connection
 
 - Measured over Tailscale to the M1: six 64-text embedding batches on one keep-alive

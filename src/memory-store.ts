@@ -7,6 +7,8 @@ import { cosineSimilarity, createEmbeddingClient, type EmbeddingClient, type Emb
 import type { MemoryQualityReport } from "./quality.js";
 import { applyDelete, applyMerge, applyPin, applyUpdate, type MemoryPatch } from "./memory-mutations.js";
 import { runSleepCycle, type BrainAction, type Summarizer } from "./brain.js";
+import { isIdleSinceLastPass, recordCompletedPass } from "./brain-pass-gate.js";
+import { ensureUniqueRecordIds } from "./record-ids.js";
 import { readdir, rm } from "node:fs/promises";
 import {
   rankMemoryRecords as rankWithRetrieval,
@@ -390,7 +392,13 @@ export class PeonMemoryStore {
     return this.withWriteLock(fn);
   }
 
-  async replaceMemoryRecords(records: MemoryRecord[]): Promise<void> {
+  async replaceMemoryRecords(input: MemoryRecord[]): Promise<void> {
+    // Ids must be unique (record-ids.ts): shared ids made the embedding sidecar re-embed the
+    // same memories on every pass. Existing brains heal on their next write.
+    const { records, reassigned } = ensureUniqueRecordIds(input);
+    if (reassigned > 0) {
+      console.warn(`[peon] ${basename(this.projectPath)}: gave ${reassigned} record(s) that shared an id a unique id`);
+    }
     await atomicWrite(
       join(this.memoryDir, "brain", "memories.jsonl"),
       records.map((record) => JSON.stringify(record)).join("\n") + (records.length > 0 ? "\n" : "")
@@ -453,25 +461,31 @@ export class PeonMemoryStore {
    * Every change is recoverable from the snapshot. Returns the actions taken.
    */
   async runBrainPass(options: { recalledIds?: string[]; summarize?: Summarizer; minClusterSize?: number } = {}): Promise<BrainAction[]> {
+    const memoriesFile = join(this.memoryDir, "brain", "memories.jsonl");
+    // Nothing recalled, no compression asked, brain untouched since the last pass: curation would
+    // find nothing new, so skip the read, the lock, the rewrite and the snapshot (brain-pass-gate.ts).
+    if (!options.recalledIds?.length && !options.summarize && (await isIdleSinceLastPass(memoriesFile))) return [];
     return this.withWriteLock(async () => {
       const records = await this.readMemoryRecords();
-      if (records.length === 0) return [];
+      if (records.length === 0) {
+        await recordCompletedPass(memoriesFile);
+        return [];
+      }
       const now = new Date().toISOString();
-      await this.snapshotBackup(records, now);
       const { records: curated, actions } = await runSleepCycle(records, {
         recalledIds: options.recalledIds,
         now,
         summarize: options.summarize,
         minClusterSize: options.minClusterSize,
-        makeSummaryId: (entity) => `mem_summary_${stableMemoryId("summary", entity).slice(-12)}`
+        makeSummaryId: (entity, content) =>
+          `mem_summary_${stableMemoryId("summary", entity).slice(-12)}_${stableMemoryId("summary", content).slice(-8)}`
       });
-      if (actions.length === 0) {
-        // Reinforcement-only strength tweaks still matter; persist them quietly.
-        await this.replaceMemoryRecords(curated);
-        return [];
-      }
+      // Every pass that gets here writes (reinforcement-only strength tweaks still matter), so
+      // snapshot first: each change stays recoverable.
+      await this.snapshotBackup(records, now);
       await this.replaceMemoryRecords(curated);
-      await this.appendJsonl("brain/brain-actions.jsonl", { at: now, actions });
+      if (actions.length > 0) await this.appendJsonl("brain/brain-actions.jsonl", { at: now, actions });
+      await recordCompletedPass(memoriesFile);
       return actions;
     });
   }
