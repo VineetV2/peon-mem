@@ -189,7 +189,7 @@ export async function compressTopicClusters(
   records: readonly MemoryRecord[],
   summarize: Summarizer,
   now: string,
-  options: { minClusterSize?: number; maxClusters?: number; protectGlobalScope?: boolean; makeId: (entity: string) => string } = { makeId: (e) => `summary_${e}` }
+  options: { minClusterSize?: number; maxClusters?: number; protectGlobalScope?: boolean; makeId: (entity: string, content: string) => string } = { makeId: (e) => `summary_${e}` }
 ): Promise<SleepCycleResult> {
   const minClusterSize = options.minClusterSize ?? 5;
   const maxClusters = options.maxClusters ?? 3; // bound LLM cost per pass
@@ -203,7 +203,8 @@ export async function compressTopicClusters(
     const content = (await summarize(cluster)).trim();
     if (!content) continue;
     const memberIds = cluster.members.map((m) => m.id);
-    const summaryId = options.makeId(cluster.entity);
+    // The id includes the summary text: a topic recompressed later must not reuse this id.
+    const summaryId = options.makeId(cluster.entity, content);
     const importance = Math.max(...cluster.members.map((m) => m.score.importance));
     const entities = Array.from(new Set(cluster.members.flatMap((m) => m.entities)));
     const summary: MemoryRecord = {
@@ -237,7 +238,7 @@ export interface SleepCycleOptions {
   maxClusters?: number;
   /** Set false when curating the GLOBAL brain — there, global beliefs are the working set. */
   protectGlobalScope?: boolean;
-  makeSummaryId: (entity: string) => string;
+  makeSummaryId: (entity: string, content: string) => string;
 }
 
 /**

@@ -52,7 +52,7 @@ export declare function compressTopicClusters(records: readonly MemoryRecord[], 
     minClusterSize?: number;
     maxClusters?: number;
     protectGlobalScope?: boolean;
-    makeId: (entity: string) => string;
+    makeId: (entity: string, content: string) => string;
 }): Promise<SleepCycleResult>;
 export interface SleepCycleOptions {
     recalledIds?: string[];
@@ -62,7 +62,7 @@ export interface SleepCycleOptions {
     maxClusters?: number;
     /** Set false when curating the GLOBAL brain — there, global beliefs are the working set. */
     protectGlobalScope?: boolean;
-    makeSummaryId: (entity: string) => string;
+    makeSummaryId: (entity: string, content: string) => string;
 }
 /**
  * One full autonomous pass: reinforce → resolve conflicts → merge duplicates →

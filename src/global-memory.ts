@@ -1,8 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryRecord, MemoryRecordInput, MemoryStatus, MemoryType } from "./types.js";
+import { isIdleSinceLastPass, recordCompletedPass } from "./brain-pass-gate.js";
+import { ensureUniqueRecordIds } from "./record-ids.js";
+
+/** Snapshots kept in <global>/backups. */
+const KEEP_SNAPSHOTS = 20;
+/**
+ * Routine pruning deletes at most this many old snapshots. The global brain used to keep every
+ * snapshot (one per 3-minute pulse: 24,037 files, 17 GB on a live install); a pile that large is
+ * never deleted automatically, only reported, so removing history stays the owner's decision.
+ */
+const MAX_ROUTINE_PRUNE = 100;
+let warnedAboutSnapshotBacklog = false;
 
 export interface OpenGlobalMemoryStoreOptions {
   globalDir?: string;
@@ -88,19 +100,28 @@ export class PeonGlobalMemoryStore {
    */
   async runBrainPass(options: { summarize?: import("./brain.js").Summarizer } = {}): Promise<import("./brain.js").BrainAction[]> {
     const { runSleepCycle } = await import("./brain.js");
+    const file = this.recordsPath();
+    // Unchanged since the last pass and no compression asked: nothing new to find (brain-pass-gate.ts).
+    if (!options.summarize && (await isIdleSinceLastPass(file))) return [];
     const all = await this.readRecords();
-    if (all.length === 0) return [];
     const now = new Date().toISOString();
+    const { records, actions } = all.length === 0
+      ? { records: all, actions: [] }
+      : await runSleepCycle(all, {
+          now,
+          summarize: options.summarize,
+          protectGlobalScope: false,
+          makeSummaryId: (entity, content) => stableMemoryId("summary", `global:${entity}\n${content}`)
+        });
+    if (actions.length === 0) {
+      await recordCompletedPass(file);
+      return [];
+    }
+    // Snapshot only when this pass writes; it used to snapshot on every pulse.
     await this.snapshotBackup(all);
-    const { records, actions } = await runSleepCycle(all, {
-      now,
-      summarize: options.summarize,
-      protectGlobalScope: false,
-      makeSummaryId: (entity) => stableMemoryId("summary", `global:${entity}`)
-    });
-    if (actions.length === 0) return [];
     await this.writeRecords(records);
     await appendFile(join(this.globalDir, "brain-actions.jsonl"), `${JSON.stringify({ at: now, actions })}\n`, "utf8");
+    await recordCompletedPass(file);
     return actions;
   }
 
@@ -117,6 +138,20 @@ export class PeonGlobalMemoryStore {
     await mkdir(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     await writeFile(join(dir, `memories-${stamp}.jsonl`), records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+    const files = (await readdir(dir).catch(() => [])).filter((f) => f.startsWith("memories-")).sort();
+    const excess = files.length - KEEP_SNAPSHOTS;
+    if (excess <= 0) return;
+    if (excess > MAX_ROUTINE_PRUNE) {
+      if (!warnedAboutSnapshotBacklog) {
+        warnedAboutSnapshotBacklog = true;
+        console.warn(
+          `[peon] global brain backups: ${files.length} snapshots in ${dir}. Routine pruning keeps the newest ` +
+            `${KEEP_SNAPSHOTS}, but a pile this large is never deleted automatically. Check them, then delete the old ones yourself.`
+        );
+      }
+      return;
+    }
+    for (const stale of files.slice(0, excess)) await rm(join(dir, stale), { force: true }).catch(() => undefined);
   }
 
   async importGlobalRecords(records: MemoryRecord[], source: GlobalMemorySource = {}): Promise<MemoryRecord[]> {
@@ -158,7 +193,8 @@ export class PeonGlobalMemoryStore {
       });
   }
 
-  private async writeRecords(records: MemoryRecord[]): Promise<void> {
+  private async writeRecords(input: MemoryRecord[]): Promise<void> {
+    const { records } = ensureUniqueRecordIds(input); // see record-ids.ts
     await writeFile(
       this.recordsPath(),
       records.map((record) => JSON.stringify(record)).join("\n") + (records.length > 0 ? "\n" : ""),

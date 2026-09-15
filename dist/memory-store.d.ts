@@ -73,7 +73,7 @@ export declare class PeonMemoryStore {
      * (applyProcessedMemory, mergeSimilarActiveRecords, replaceMemoryRecords) directly.
      */
     runExclusive<T>(fn: () => Promise<T>): Promise<T>;
-    replaceMemoryRecords(records: MemoryRecord[]): Promise<void>;
+    replaceMemoryRecords(input: MemoryRecord[]): Promise<void>;
     /** Edit a belief in place (content, scores, status, or pin). Returns the updated record, or null if unknown. */
     updateMemoryRecord(id: string, patch: MemoryPatch): Promise<MemoryRecord | null>;
     /** Delete a belief outright. Returns true if a record was removed. */
